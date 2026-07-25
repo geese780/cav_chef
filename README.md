@@ -12,15 +12,15 @@ than either of those bots. Own manifest, own tokens, own process.
 
 ## Status
 
-Phase 1 correctness is done: config/column validation on boot (FR-01), unit tests
-for the threshold logic (FR-03), and cross-cycle de-dup so a still-low item doesn't
-get re-prompted every cycle (FR-02). Multi-location support (FR-27) is in — each
-location has its own inventory List, all locations share one approval channel, and
-every prompt is tagged with its location name. Calendar-driven triggering (FR-28)
-is coded and unit-tested but not yet live-verified — it needs a real Google Cloud
-service account and at least one location's calendar shared with it (see Setup
-below); until then, a location with no `calendarId` configured just runs on
-manual trigger. Still to do, notably:
+Phase 1 (correctness) and Phase 1.5 (scheduling & multi-location) are both done.
+Config/column validation on boot (FR-01), unit tests for the threshold logic
+(FR-03), and cross-cycle de-dup so a still-low item doesn't get re-prompted every
+cycle (FR-02). Multi-location support (FR-27): each location has its own
+inventory List, all locations share one approval channel, and every prompt is
+tagged with its location name. Calendar-driven triggering (FR-28): each location
+with a `calendarId` configured auto-runs its cycle once its next booking is
+within the lead time, instead of a flat schedule; a location without one just
+runs on manual trigger. Still to do, notably:
 
 - **No persistence** — pending drafts live in memory and are lost on restart (FR-06).
 - **No approver allowlist** — anyone who can click Approve/Deny can (FR-10).

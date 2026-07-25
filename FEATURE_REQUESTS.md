@@ -96,29 +96,30 @@ location it's for; a budget cap breach in one location doesn't block another (N/
 until FR-11 exists).
 
 ### FR-28 — Calendar-driven trigger · P1
-`[~]`
-Implemented: `googleCalendar.js` wraps the Calendar API (Application Default
-Credentials via `GOOGLE_APPLICATION_CREDENTIALS`, a service account sharing each
-location's calendar — same pattern as sharing a Slack List with the bot).
-`scheduler.js` holds the pure decision (`shouldTriggerCycle` — true once a
-booking is within `CALENDAR_LEAD_TIME_HOURS`, default 48h, including an
-already-in-progress booking) and `pollDueLocations`, which `app.js` runs on
-startup and every `CALENDAR_POLL_INTERVAL_MINUTES` (default 60) thereafter,
-per location. A location with no `calendarId` set is skipped by the poll
-entirely — no Google call is made for it — and falls back to manual-only
-triggering. `npm run run-reorder-cycle` remains an unconditional per-location
-override regardless of calendar state. FR-01's startup check now also verifies
-calendar reachability for any location with a `calendarId` set.
+`[x]`
+`googleCalendar.js` wraps the Calendar API (Application Default Credentials via
+`GOOGLE_APPLICATION_CREDENTIALS`, a service account sharing each location's
+calendar — same pattern as sharing a Slack List with the bot). `scheduler.js`
+holds the pure decision (`shouldTriggerCycle` — true once a booking is within
+`CALENDAR_LEAD_TIME_HOURS`, default 48h, including an already-in-progress
+booking) and `pollDueLocations`, which `app.js` runs on startup and every
+`CALENDAR_POLL_INTERVAL_MINUTES` (default 60) thereafter, per location. A
+location with no `calendarId` set is skipped by the poll entirely — no Google
+call is made for it — and falls back to manual-only triggering via
+`npm run run-reorder-cycle`, which remains an unconditional override regardless
+of calendar state. FR-01's startup check also verifies calendar reachability for
+any location with a `calendarId` set.
 Unit-tested (`test/scheduler.test.js`): the lead-time boundary, an
 already-started booking, no upcoming booking, and the env-var overrides/defaults.
-Verified against the real workspace that startup/poll behavior is correct with
-`calendarId: ""` (skips cleanly, no Slack posts). **Not yet verified against a
-real Google Calendar** — that needs your service-account setup (see README) and
-is why this stays `[~]` instead of `[x]`.
-**Accept:** a location with no upcoming booking runs no cycle; a location with a
-booking in N days runs a cycle at the configured lead time before it; a manual
-trigger (`npm run run-reorder-cycle`) still works as a per-location override.
-Last two verified with real bookings once a calendar is wired up.
+Verified live against a real Google Calendar (WeHo, service account shared per
+README): `npm run check-calendar` correctly read a real booking and reported it
+due; `npm start`'s poll then found that same booking within the 48h lead time and
+automatically ran WeHo's cycle — posting `[WeHo] Reorder needed — 3 item(s)` with
+no manual trigger involved.
+**Accept:** a location with no upcoming booking runs no cycle (verified with
+`calendarId: ""`); a location with a booking in N days runs a cycle at the
+configured lead time before it (verified live, above); a manual trigger
+(`npm run run-reorder-cycle`) still works as a per-location override.
 
 ---
 
@@ -273,7 +274,7 @@ Expand from the single-user test group to real approvers/buyers once the above h
 ## Suggested near-term order
 
 1. ~~FR-02~~ ~~FR-03~~ ~~FR-01~~ done — correctness locked in while still in mock mode.
-2. ~~FR-27~~ done. FR-28 — calendar-driven triggering, now that fan-out exists.
+2. ~~FR-27~~ ~~FR-28~~ done — Phase 1.5 complete, multi-location + calendar trigger both live.
 3. FR-06, FR-07 — state + idempotency, the reliability floor.
 4. FR-10, FR-11, FR-13 — spend safety (per-location), before any live consideration.
 5. FR-14 (+ FR-15) — go live on one item once the role clears.
