@@ -101,6 +101,44 @@ function toNumber(s) {
   return Number.isFinite(n) ? n : undefined;
 }
 
+/** Fetch a List's column schema by its file id. */
+async function fetchListSchema(client, listId) {
+  const fileInfo = await client.files.info({ file: listId });
+  const schema = fileInfo.file && fileInfo.file.list_metadata && fileInfo.file.list_metadata.schema;
+  if (!schema) throw new Error(`File ${listId} does not look like a Slack List (no list_metadata.schema)`);
+  return schema;
+}
+
+/** Throws with a clear message if a required column (name/asin/on_hand/threshold) wasn't matched. */
+function assertRequiredColumns(columnIdFor) {
+  if (!columnIdFor.name || !columnIdFor.asin || !columnIdFor.on_hand || !columnIdFor.threshold) {
+    throw new Error(
+      `Inventory list is missing required columns. Found: ${JSON.stringify(columnIdFor)}. ` +
+      `Expected columns named "name", "asin", "on_hand", and "threshold".`
+    );
+  }
+}
+
+/**
+ * Validate that INVENTORY_LIST_ID is set and its List has the required
+ * columns, without fetching every row — used for a fast startup check (FR-01).
+ */
+async function validateInventoryListConfig({ client, logger }) {
+  const log = logger || console;
+  const listId = (process.env.INVENTORY_LIST_ID || '').trim();
+  if (!listId) throw new Error('INVENTORY_LIST_ID is not set in .env');
+
+  const schema = await fetchListSchema(client, listId);
+  const { columnIdFor } = mapSchemaColumns(schema);
+  assertRequiredColumns(columnIdFor);
+  if (!columnIdFor.reorder_qty) {
+    log.warn('Inventory list has no "reorder_qty" column — defaulting every reorder to qty 1.');
+  }
+  if (!columnIdFor.unit_price) {
+    log.warn('Inventory list has no "unit_price" column — reorder prompts will have no ExpectedCharge.');
+  }
+}
+
 /**
  * Read the inventory list and return every row, parsed.
  */
@@ -109,17 +147,9 @@ async function getInventoryItems({ client, logger }) {
   const listId = (process.env.INVENTORY_LIST_ID || '').trim();
   if (!listId) throw new Error('INVENTORY_LIST_ID is not set in .env');
 
-  const fileInfo = await client.files.info({ file: listId });
-  const schema = fileInfo.file && fileInfo.file.list_metadata && fileInfo.file.list_metadata.schema;
-  if (!schema) throw new Error(`File ${listId} does not look like a Slack List (no list_metadata.schema)`);
-
+  const schema = await fetchListSchema(client, listId);
   const { columnIdFor, columnMeta } = mapSchemaColumns(schema);
-  if (!columnIdFor.name || !columnIdFor.asin || !columnIdFor.on_hand || !columnIdFor.threshold) {
-    throw new Error(
-      `Inventory list is missing required columns. Found: ${JSON.stringify(columnIdFor)}. ` +
-      `Expected columns named "name", "asin", "on_hand", and "threshold".`
-    );
-  }
+  assertRequiredColumns(columnIdFor);
   if (!columnIdFor.reorder_qty) {
     log.warn('Inventory list has no "reorder_qty" column — defaulting every reorder to qty 1.');
   }
@@ -161,4 +191,4 @@ function itemsNeedingReorder(items) {
     }));
 }
 
-module.exports = { getInventoryItems, itemsNeedingReorder, normalizeKey, extractAsin };
+module.exports = { getInventoryItems, itemsNeedingReorder, normalizeKey, extractAsin, validateInventoryListConfig };

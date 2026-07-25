@@ -17,11 +17,18 @@ drafts are in-memory. A cycle skips entirely while a batch is still pending (FR-
 *No Amazon dependency. Fully buildable and testable now.*
 
 ### FR-01 — Startup config & column validation · P1
-`[ ]`
-On boot, verify every `COL_*` id actually exists in the target List (via a probe
-row or `slackLists` column metadata) and that required env vars are set.
+`[x]`
+`startupCheck.js` runs before `app.start()`: asserts `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`,
+`INVENTORY_LIST_ID`, `APPROVAL_CHANNEL_ID` are all set (naming every missing one, not
+just the first), confirms `APPROVAL_CHANNEL_ID` resolves via `conversations.info`, and
+validates the List's schema has the required `name`/`asin`/`on_hand`/`threshold`
+columns (via the same schema-matching `getInventoryItems` uses, factored out so both
+share one source of truth). Any failure throws before Socket Mode connects and the
+process exits non-zero.
 **Accept:** app refuses to start with a clear error naming any missing/unmatched
-column; a valid config starts silently.
+column; a valid config starts silently. Verified against the real workspace: valid
+config starts clean; a deliberately wrong `APPROVAL_CHANNEL_ID` fails with
+`channel_not_found` before startup.
 
 ### FR-02 — De-duplicate pending reorders · P1
 `[x]`
@@ -242,7 +249,7 @@ Expand from the single-user test group to real approvers/buyers once the above h
 
 ## Suggested near-term order
 
-1. ~~FR-02~~ ~~FR-03~~ done. FR-01 — lock in correctness while you're still in mock mode.
+1. ~~FR-02~~ ~~FR-03~~ ~~FR-01~~ done — correctness locked in while still in mock mode.
 2. FR-27, FR-28 — multi-location config, then calendar-driven triggering.
 3. FR-06, FR-07 — state + idempotency, the reliability floor.
 4. FR-10, FR-11, FR-13 — spend safety (per-location), before any live consideration.

@@ -7,6 +7,7 @@ const pendingStore = require('./pendingStore');
 const { placeOrder } = require('./orderingClient');
 const { buildResolvedBlocks } = require('./blockKit');
 const { runReorderCycle } = require('./reorderCycle');
+const { validateStartupConfig } = require('./startupCheck');
 
 /** CAV Slackbot — inventory reorder approvals (see FEATURE_REQUESTS.md). */
 const app = new App({
@@ -62,6 +63,7 @@ app.action('deny_reorder', async ({ ack, action, body, client, logger }) => {
 
 (async () => {
   try {
+    await validateStartupConfig({ client: app.client, logger: app.logger });
     await app.start();
     app.logger.info('⚡️ CAV_Chef is running!');
 
@@ -71,5 +73,6 @@ app.action('deny_reorder', async ({ ack, action, body, client, logger }) => {
     app.logger.info(`Startup reorder cycle posted ${posted.length} prompt(s).`);
   } catch (error) {
     app.logger.error('Failed to start the app', error);
+    process.exit(1);
   }
 })();
