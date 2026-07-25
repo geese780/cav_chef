@@ -2,11 +2,13 @@
  * Startup config validation (FR-01). Runs before app.start() so a bad
  * config fails fast with one clear error instead of surfacing partway
  * through the first reorder cycle. Validates every configured location
- * (FR-27), not just one.
+ * (FR-27), including calendar access for any location with a calendarId
+ * set (FR-28) — locations without one just skip the calendar check.
  */
 
 const { validateInventoryListConfig } = require('./inventoryList');
 const { parseLocations } = require('./locations');
+const { buildCalendarClient, getNextEventStart } = require('./googleCalendar');
 
 const REQUIRED_ENV_VARS = ['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'LOCATIONS_JSON', 'APPROVAL_CHANNEL_ID'];
 
@@ -27,6 +29,21 @@ async function assertApprovalChannel(client) {
   }
 }
 
+async function assertLocationCalendars(locations) {
+  const withCalendars = locations.filter(l => l.calendarId);
+  if (withCalendars.length === 0) return;
+
+  const calendar = buildCalendarClient();
+  for (const location of withCalendars) {
+    try {
+      await getNextEventStart({ calendar, calendarId: location.calendarId });
+    } catch (err) {
+      const reason = (err.errors && err.errors[0] && err.errors[0].reason) || err.message;
+      throw new Error(`Location "${location.name}" calendarId "${location.calendarId}" is not reachable: ${reason}`);
+    }
+  }
+}
+
 async function validateStartupConfig({ client, logger }) {
   assertRequiredEnvVars();
   await assertApprovalChannel(client);
@@ -39,6 +56,8 @@ async function validateStartupConfig({ client, logger }) {
       throw new Error(`Location "${location.name}" (listId ${location.listId}): ${err.message}`);
     }
   }
+
+  await assertLocationCalendars(locations);
 }
 
 module.exports = { validateStartupConfig, assertRequiredEnvVars };

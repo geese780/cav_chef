@@ -16,10 +16,12 @@ Phase 1 correctness is done: config/column validation on boot (FR-01), unit test
 for the threshold logic (FR-03), and cross-cycle de-dup so a still-low item doesn't
 get re-prompted every cycle (FR-02). Multi-location support (FR-27) is in — each
 location has its own inventory List, all locations share one approval channel, and
-every prompt is tagged with its location name. Still to do, notably:
+every prompt is tagged with its location name. Calendar-driven triggering (FR-28)
+is coded and unit-tested but not yet live-verified — it needs a real Google Cloud
+service account and at least one location's calendar shared with it (see Setup
+below); until then, a location with no `calendarId` configured just runs on
+manual trigger. Still to do, notably:
 
-- **No calendar-driven trigger yet** — cycles run manually or on `npm start`, not
-  based on a location's next booking (FR-28).
 - **No persistence** — pending drafts live in memory and are lost on restart (FR-06).
 - **No approver allowlist** — anyone who can click Approve/Deny can (FR-10).
 - **No budget guardrails** — there is no spend cap yet (FR-11).
@@ -51,9 +53,9 @@ Do not point this at a real spend-capable Amazon account until at least Phase 3
    ```
    LOCATIONS_JSON=[{"name":"WeHo","listId":"F0BLN7YRUDN","calendarId":""},{"name":"DTLA","listId":"...","calendarId":""}]
    ```
-   `calendarId` is reserved for the calendar-driven trigger (FR-28) and unused for
-   now — leave it `""` until that lands. Adding a location is a config-only change,
-   no code edit needed.
+   `calendarId` powers the calendar-driven trigger (FR-28, see below) — leave it
+   `""` for a location until you've set that up. Adding a location is a
+   config-only change, no code edit needed.
 7. Pick (or create) one shared channel for reorder prompts across all locations,
    invite the bot to it (`/invite @CAV_Chef`), and put its channel ID in
    `APPROVAL_CHANNEL_ID`.
@@ -68,6 +70,37 @@ npm run check-inventory-list
 location and flags which ones would currently get a reorder prompt — no messages
 are posted, nothing is written anywhere.
 
+### Calendar-driven triggering (FR-28)
+
+Each location's reorder cycle can run based on that location's next booking
+instead of a flat schedule — restock a location once its next booking is within
+a configurable lead time, skip it otherwise.
+
+1. In Google Cloud Console, create (or use) a project, enable the **Google
+   Calendar API**, and create a **service account**. Generate a JSON key for it
+   and note the service account's email address (looks like
+   `name@project.iam.gserviceaccount.com`).
+2. Save the key file somewhere on this machine and set
+   `GOOGLE_APPLICATION_CREDENTIALS` in `.env` to its path.
+3. For each location that should auto-trigger, share that location's Google
+   Calendar with the service account's email (Settings and sharing → Share with
+   specific people → paste the email, "See all event details" is enough since
+   this only reads). Put that calendar's ID (Settings → Integrate calendar →
+   Calendar ID, usually an email-shaped string) into that location's
+   `calendarId` in `LOCATIONS_JSON`.
+4. Tune `CALENDAR_LEAD_TIME_HOURS` (default 48 — how close a booking needs to be
+   to trigger a cycle) and `CALENDAR_POLL_INTERVAL_MINUTES` (default 60 — how
+   often `npm start` checks) in `.env` if the defaults don't fit.
+
+```sh
+npm run check-calendar
+```
+
+Read-only smoke test: prints each location's next booking and whether it would
+trigger a cycle right now, without posting anything or running any cycle. A
+location with no `calendarId` set just reports "manual trigger only" — no Google
+call is made for it, so this is safe to run before any calendar is configured.
+
 ## Running the approve/deny flow end to end
 
 In one terminal:
@@ -77,9 +110,14 @@ npm start
 ```
 
 This validates config on boot (refuses to start on a bad `.env` or List schema —
-see FR-01) and immediately runs one reorder cycle per location.
+see FR-01), then polls every `CALENDAR_POLL_INTERVAL_MINUTES` (default 60):
+locations with a `calendarId` configured get a cycle whenever their next booking
+enters `CALENDAR_LEAD_TIME_HOURS`; locations without one are skipped entirely and
+only run via manual trigger.
 
-To trigger additional cycles against the same running process:
+To trigger a cycle for every location right now, regardless of calendar state
+(bypasses FR-28 entirely — useful for testing, or locations with no calendar set
+up yet):
 
 ```sh
 npm run run-reorder-cycle

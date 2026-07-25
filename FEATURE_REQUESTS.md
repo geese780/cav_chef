@@ -96,16 +96,29 @@ location it's for; a budget cap breach in one location doesn't block another (N/
 until FR-11 exists).
 
 ### FR-28 — Calendar-driven trigger · P1
-`[ ]`
-Replace fixed-interval (e.g. weekly) triggering with a per-location check against
-that location's Google Calendar: read the next upcoming booking/event and run a
-reorder cycle at a configurable lead time before it, instead of on a flat cadence
-(a location with nothing booked doesn't need restocking on schedule). Requires
-Google Calendar API access (service account or OAuth) scoped read-only, one
-calendar id per location per FR-27's config.
+`[~]`
+Implemented: `googleCalendar.js` wraps the Calendar API (Application Default
+Credentials via `GOOGLE_APPLICATION_CREDENTIALS`, a service account sharing each
+location's calendar — same pattern as sharing a Slack List with the bot).
+`scheduler.js` holds the pure decision (`shouldTriggerCycle` — true once a
+booking is within `CALENDAR_LEAD_TIME_HOURS`, default 48h, including an
+already-in-progress booking) and `pollDueLocations`, which `app.js` runs on
+startup and every `CALENDAR_POLL_INTERVAL_MINUTES` (default 60) thereafter,
+per location. A location with no `calendarId` set is skipped by the poll
+entirely — no Google call is made for it — and falls back to manual-only
+triggering. `npm run run-reorder-cycle` remains an unconditional per-location
+override regardless of calendar state. FR-01's startup check now also verifies
+calendar reachability for any location with a `calendarId` set.
+Unit-tested (`test/scheduler.test.js`): the lead-time boundary, an
+already-started booking, no upcoming booking, and the env-var overrides/defaults.
+Verified against the real workspace that startup/poll behavior is correct with
+`calendarId: ""` (skips cleanly, no Slack posts). **Not yet verified against a
+real Google Calendar** — that needs your service-account setup (see README) and
+is why this stays `[~]` instead of `[x]`.
 **Accept:** a location with no upcoming booking runs no cycle; a location with a
 booking in N days runs a cycle at the configured lead time before it; a manual
 trigger (`npm run run-reorder-cycle`) still works as a per-location override.
+Last two verified with real bookings once a calendar is wired up.
 
 ---
 

@@ -6,8 +6,9 @@ config();
 const pendingStore = require('./pendingStore');
 const { placeOrder } = require('./orderingClient');
 const { buildResolvedBlocks } = require('./blockKit');
-const { runAllLocationCycles } = require('./reorderCycle');
 const { validateStartupConfig } = require('./startupCheck');
+const { buildCalendarClient } = require('./googleCalendar');
+const { pollDueLocations, leadTimeHours, pollIntervalMinutes } = require('./scheduler');
 
 /** CAV Slackbot — inventory reorder approvals (see FEATURE_REQUESTS.md). */
 const app = new App({
@@ -67,12 +68,21 @@ app.action('deny_reorder', async ({ ack, action, body, client, logger }) => {
     await app.start();
     app.logger.info('⚡️ CAV_Chef is running!');
 
-    // No scheduler yet (see FR-28) — run one cycle per location on startup so
-    // posted drafts live in this same process and their Approve/Deny buttons resolve.
-    const results = await runAllLocationCycles({ client: app.client, logger: app.logger });
-    for (const { location, posted } of results) {
-      app.logger.info(`[${location}] Startup reorder cycle posted ${posted.length} prompt(s).`);
-    }
+    // Calendar-driven trigger (FR-28): poll every location on a fixed cadence
+    // and run a cycle only for those whose next booking is within the lead
+    // time. Runs in this same process so posted drafts' Approve/Deny buttons
+    // resolve. A location with no calendarId set is skipped here entirely —
+    // use `npm run run-reorder-cycle` to trigger it manually.
+    const calendar = buildCalendarClient();
+    const intervalMinutes = pollIntervalMinutes();
+    const poll = () =>
+      pollDueLocations({ client: app.client, calendar, logger: app.logger }).catch(err =>
+        app.logger.error('Calendar poll failed', err)
+      );
+
+    await poll();
+    setInterval(poll, intervalMinutes * 60 * 1000);
+    app.logger.info(`Polling for due locations every ${intervalMinutes}min (${leadTimeHours()}h lead time).`);
   } catch (error) {
     app.logger.error('Failed to start the app', error);
     process.exit(1);

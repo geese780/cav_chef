@@ -7,12 +7,14 @@
     "start": "node app.js",
     "test": "node --test",
     "check-inventory-list": "node scripts/check-inventory-list.js",
+    "check-calendar": "node scripts/check-calendar.js",
     "run-reorder-cycle": "node scripts/run-reorder-cycle.js"
   },
   "license": "UNLICENSED",
   "dependencies": {
     "@slack/bolt": "4.7.3",
     "@slack/web-api": "^8.0.0",
-    "dotenv": "~17.4.2"
+    "dotenv": "~17.4.2",
+    "googleapis": "^173.0.0"
   }
 }
