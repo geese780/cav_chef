@@ -1,8 +1,8 @@
 /**
  * One reorder cycle: read the inventory list, flag items below threshold,
- * and post a single batched Approve/Deny prompt covering all of them. No
- * cross-cycle de-dup yet — rows still low next cycle get a new prompt
- * (see FR-02).
+ * and post a single batched Approve/Deny prompt covering all of them.
+ * Skips entirely if a prior cycle's batch is still awaiting approval, so a
+ * still-low item doesn't get re-prompted every cycle (see FR-02).
  */
 
 const { randomUUID } = require('crypto');
@@ -14,6 +14,12 @@ async function runReorderCycle({ client, logger }) {
   const log = logger || console;
   const channel = (process.env.APPROVAL_CHANNEL_ID || '').trim();
   if (!channel) throw new Error('APPROVAL_CHANNEL_ID is not set in .env');
+
+  if (pendingStore.list().length > 0) {
+    const msg = 'A reorder batch is still pending approval — skipping this cycle.';
+    log.info ? log.info(msg) : log.log(msg);
+    return [];
+  }
 
   const items = await getInventoryItems({ client, logger: log });
   const toReorder = itemsNeedingReorder(items);

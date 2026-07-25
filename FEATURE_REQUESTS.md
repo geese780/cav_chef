@@ -6,9 +6,10 @@ system. Phases are ordered by dependency; within a phase, do P0 before P1 before
 **Priority:** P0 = blocks safe live use · P1 = needed for production · P2 = improves quality/ops
 **Status legend:** `[ ]` todo · `[~]` in progress · `[x]` done
 
-**Baseline (already built):** Slack read → threshold check → Block Kit Approve/Deny
-→ message update runs end to end in mock mode. `ExpectedCharge` guard is wired into
-the draft. `placeOrder` is stubbed. Pending drafts are in-memory. No de-dup.
+**Baseline (already built):** Slack read → threshold check → one batched Block Kit
+Approve All/Deny All prompt per cycle → message update runs end to end in mock mode.
+`ExpectedCharge` guard is wired into the draft. `placeOrder` is stubbed. Pending
+drafts are in-memory. A cycle skips entirely while a batch is still pending (FR-02).
 
 ---
 
@@ -23,12 +24,15 @@ row or `slackLists` column metadata) and that required env vars are set.
 column; a valid config starts silently.
 
 ### FR-02 — De-duplicate pending reorders · P1
-`[ ]`
-An item below threshold across consecutive cycles currently generates a new prompt
-each cycle. Track open drafts per `rowId` and skip items that already have a pending
-prompt.
-**Accept:** running two cycles back-to-back with the same low item posts exactly one
-prompt; resolving it (approve/deny) allows a future prompt if still low.
+`[x]`
+Reorder prompts are now batched one-per-cycle (all flagged items in one Approve
+All/Deny All message), so `runReorderCycle` skips starting a new cycle entirely
+while any draft is still pending in `pendingStore` — no per-rowId tracking needed
+at this scope. Revisit per-location scoping once FR-27 lands (today a pending
+batch anywhere blocks every cycle, since there's only one location).
+**Accept:** running two cycles back-to-back with a still-low item posts exactly one
+prompt (the second cycle logs "skipping" and posts nothing); resolving the batch
+(approve or deny) allows the next cycle to post again if items are still low.
 
 ### FR-03 — Unit tests for threshold logic · P1
 `[ ]`
@@ -233,7 +237,7 @@ Expand from the single-user test group to real approvers/buyers once the above h
 
 ## Suggested near-term order
 
-1. FR-02, FR-03, FR-01 — lock in correctness while you're still in mock mode.
+1. ~~FR-02~~ done. FR-03, FR-01 — lock in correctness while you're still in mock mode.
 2. FR-27, FR-28 — multi-location config, then calendar-driven triggering.
 3. FR-06, FR-07 — state + idempotency, the reliability floor.
 4. FR-10, FR-11, FR-13 — spend safety (per-location), before any live consideration.
