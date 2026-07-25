@@ -35,9 +35,14 @@ prompt (the second cycle logs "skipping" and posts nothing); resolving the batch
 (approve or deny) allows the next cycle to post again if items are still low.
 
 ### FR-03 — Unit tests for threshold logic · P1
-`[ ]`
-Cover `itemsNeedingReorder`: below / at / above threshold, missing `onHand`/`threshold`,
-missing `asin`, `reorderQty` defaulting to 1, non-numeric cells.
+`[x]`
+Covered `itemsNeedingReorder` (below/at/above threshold, missing asin/onHand/threshold,
+reorderQty defaulting to 1, empty list) plus `extractAsin` (URL and bare-ASIN parsing,
+the unresolvable-shortlink case) and `normalizeKey` in `test/inventoryList.test.js`,
+using Node's built-in `node:test` runner — no new dependency. Non-numeric cells are
+the same code path as missing ones, since `toNumber()` converts them to `undefined`
+before `itemsNeedingReorder` ever sees them; noted in the test file rather than
+duplicated as a separate case.
 **Accept:** test suite runs via `npm test` and passes; logic changes require test updates.
 
 ### FR-04 — Report skipped rows to Slack · P2
@@ -237,7 +242,7 @@ Expand from the single-user test group to real approvers/buyers once the above h
 
 ## Suggested near-term order
 
-1. ~~FR-02~~ done. FR-03, FR-01 — lock in correctness while you're still in mock mode.
+1. ~~FR-02~~ ~~FR-03~~ done. FR-01 — lock in correctness while you're still in mock mode.
 2. FR-27, FR-28 — multi-location config, then calendar-driven triggering.
 3. FR-06, FR-07 — state + idempotency, the reliability floor.
 4. FR-10, FR-11, FR-13 — spend safety (per-location), before any live consideration.

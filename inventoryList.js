@@ -161,4 +161,4 @@ function itemsNeedingReorder(items) {
     }));
 }
 
-module.exports = { getInventoryItems, itemsNeedingReorder, normalizeKey };
+module.exports = { getInventoryItems, itemsNeedingReorder, normalizeKey, extractAsin };

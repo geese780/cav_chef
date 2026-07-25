@@ -5,6 +5,7 @@
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
+    "test": "node --test",
     "check-inventory-list": "node scripts/check-inventory-list.js",
     "run-reorder-cycle": "node scripts/run-reorder-cycle.js"
   },
