@@ -1,0 +1,17 @@
+{
+  "name": "cav-chef",
+  "version": "0.1.0",
+  "description": "CAV Slackbot — reads a Slack List of inventory, flags items below threshold, and posts Approve/Deny reorder prompts to Slack.",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "check-inventory-list": "node scripts/check-inventory-list.js",
+    "run-reorder-cycle": "node scripts/run-reorder-cycle.js"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@slack/bolt": "4.7.3",
+    "@slack/web-api": "^8.0.0",
+    "dotenv": "~17.4.2"
+  }
+}
