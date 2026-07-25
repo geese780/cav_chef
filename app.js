@@ -6,7 +6,7 @@ config();
 const pendingStore = require('./pendingStore');
 const { placeOrder } = require('./orderingClient');
 const { buildResolvedBlocks } = require('./blockKit');
-const { runReorderCycle } = require('./reorderCycle');
+const { runAllLocationCycles } = require('./reorderCycle');
 const { validateStartupConfig } = require('./startupCheck');
 
 /** CAV Slackbot — inventory reorder approvals (see FEATURE_REQUESTS.md). */
@@ -34,12 +34,12 @@ app.action('approve_reorder', async ({ ack, action, body, client, logger }) => {
   await client.chat.update({
     channel: draft.channel,
     ts: draft.ts,
-    text: `Reorder approved: ${draft.items.length} item(s)`,
-    blocks: buildResolvedBlocks({ draftItems: draft.items, decision: 'approved', byUserId, orderResults })
+    text: `[${draft.locationName}] Reorder approved: ${draft.items.length} item(s)`,
+    blocks: buildResolvedBlocks({ draftItems: draft.items, decision: 'approved', byUserId, orderResults, locationName: draft.locationName })
   });
 
   pendingStore.remove(action.value);
-  logger.info(`Approved batch ${draft.draftId} by ${byUserId} — ${orderResults.length} mock order(s)`);
+  logger.info(`[${draft.locationName}] Approved batch ${draft.draftId} by ${byUserId} — ${orderResults.length} mock order(s)`);
 });
 
 app.action('deny_reorder', async ({ ack, action, body, client, logger }) => {
@@ -53,12 +53,12 @@ app.action('deny_reorder', async ({ ack, action, body, client, logger }) => {
   await client.chat.update({
     channel: draft.channel,
     ts: draft.ts,
-    text: `Reorder denied: ${draft.items.length} item(s)`,
-    blocks: buildResolvedBlocks({ draftItems: draft.items, decision: 'denied', byUserId })
+    text: `[${draft.locationName}] Reorder denied: ${draft.items.length} item(s)`,
+    blocks: buildResolvedBlocks({ draftItems: draft.items, decision: 'denied', byUserId, locationName: draft.locationName })
   });
 
   pendingStore.remove(action.value);
-  logger.info(`Denied batch ${draft.draftId} by ${byUserId}`);
+  logger.info(`[${draft.locationName}] Denied batch ${draft.draftId} by ${byUserId}`);
 });
 
 (async () => {
@@ -67,10 +67,12 @@ app.action('deny_reorder', async ({ ack, action, body, client, logger }) => {
     await app.start();
     app.logger.info('⚡️ CAV_Chef is running!');
 
-    // No scheduler yet (see FR-27/FR-28) — run one cycle on startup so posted
-    // drafts live in this same process and their Approve/Deny buttons resolve.
-    const posted = await runReorderCycle({ client: app.client, logger: app.logger });
-    app.logger.info(`Startup reorder cycle posted ${posted.length} prompt(s).`);
+    // No scheduler yet (see FR-28) — run one cycle per location on startup so
+    // posted drafts live in this same process and their Approve/Deny buttons resolve.
+    const results = await runAllLocationCycles({ client: app.client, logger: app.logger });
+    for (const { location, posted } of results) {
+      app.logger.info(`[${location}] Startup reorder cycle posted ${posted.length} prompt(s).`);
+    }
   } catch (error) {
     app.logger.error('Failed to start the app', error);
     process.exit(1);

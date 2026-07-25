@@ -6,10 +6,13 @@ system. Phases are ordered by dependency; within a phase, do P0 before P1 before
 **Priority:** P0 = blocks safe live use · P1 = needed for production · P2 = improves quality/ops
 **Status legend:** `[ ]` todo · `[~]` in progress · `[x]` done
 
-**Baseline (already built):** Slack read → threshold check → one batched Block Kit
-Approve All/Deny All prompt per cycle → message update runs end to end in mock mode.
-`ExpectedCharge` guard is wired into the draft. `placeOrder` is stubbed. Pending
-drafts are in-memory. A cycle skips entirely while a batch is still pending (FR-02).
+**Baseline (already built):** per-location Slack read → threshold check → one
+batched, location-tagged Block Kit Approve All/Deny All prompt per location's
+cycle → message update, all locations sharing one approval channel, runs end to
+end in mock mode. Config and List schema validated on boot (FR-01). A location's
+cycle skips entirely while its batch is still pending (FR-02). `ExpectedCharge`
+guard is wired into the draft. `placeOrder` is stubbed. Pending drafts are
+in-memory.
 
 ---
 
@@ -73,17 +76,24 @@ from one location to N. Do FR-27 before FR-28 — the trigger should already be
 looping over locations before it gets smarter about timing.*
 
 ### FR-27 — Multi-location config & fan-out · P1
-`[ ]`
-Generalize the single `INVENTORY_LIST_ID` env var into a list of per-location
-configs (List id, calendar id, display name), and run the read → threshold check
-→ approval cycle independently per location. All locations' approval prompts post
-to the same shared `APPROVAL_CHANNEL_ID` — no per-location channel — so prompts
-must carry the location name (Block Kit text) to stay distinguishable in one feed.
-Keep Phase 3 guardrails (FR-10 approver allowlist, FR-11 budget caps) scoped per
-location, not global — a 3-location group needs 3 budget caps, not one shared pool.
-**Accept:** adding a 4th location config requires no code change, only config;
-every prompt in the shared channel clearly states which location it's for; a
-budget cap breach in one location doesn't block another.
+`[x]`
+Replaced `INVENTORY_LIST_ID` with `LOCATIONS_JSON` (`locations.js`), a JSON array
+of `{name, listId, calendarId}` — `calendarId` is carried through now but unused
+until FR-28. `runAllLocationCycles` (`reorderCycle.js`) loops `parseLocations()`
+and runs an independent cycle per location. All locations post to the same shared
+`APPROVAL_CHANNEL_ID`; every prompt and resolved message is tagged `[LocationName]`
+(`blockKit.js`) to stay distinguishable in the one feed. FR-02's de-dup is now
+scoped per `locationName` in `pendingStore`, so one location's pending batch
+doesn't block another's cycle. FR-01's startup check now validates every
+location's List schema, not just one. Verified end to end against the real
+workspace: `[WeHo]`-tagged prompt posted, Approve/Deny both resolve correctly.
+No guardrails exist yet at all pre-Phase-3, so per-location scoping of FR-10/FR-11
+is deferred to whenever those land, not a gap introduced here.
+**Accept:** adding a 4th location config requires no code change, only config
+(verified: `parseLocations` handles an arbitrary-length array — see
+`test/locations.test.js`); every prompt in the shared channel clearly states which
+location it's for; a budget cap breach in one location doesn't block another (N/A
+until FR-11 exists).
 
 ### FR-28 — Calendar-driven trigger · P1
 `[ ]`
@@ -250,7 +260,7 @@ Expand from the single-user test group to real approvers/buyers once the above h
 ## Suggested near-term order
 
 1. ~~FR-02~~ ~~FR-03~~ ~~FR-01~~ done — correctness locked in while still in mock mode.
-2. FR-27, FR-28 — multi-location config, then calendar-driven triggering.
+2. ~~FR-27~~ done. FR-28 — calendar-driven triggering, now that fan-out exists.
 3. FR-06, FR-07 — state + idempotency, the reliability floor.
 4. FR-10, FR-11, FR-13 — spend safety (per-location), before any live consideration.
 5. FR-14 (+ FR-15) — go live on one item once the role clears.

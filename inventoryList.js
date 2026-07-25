@@ -120,13 +120,12 @@ function assertRequiredColumns(columnIdFor) {
 }
 
 /**
- * Validate that INVENTORY_LIST_ID is set and its List has the required
- * columns, without fetching every row — used for a fast startup check (FR-01).
+ * Validate that a List has the required columns, without fetching every
+ * row — used for a fast startup check (FR-01), once per location (FR-27).
  */
-async function validateInventoryListConfig({ client, logger }) {
+async function validateInventoryListConfig({ client, logger, listId }) {
   const log = logger || console;
-  const listId = (process.env.INVENTORY_LIST_ID || '').trim();
-  if (!listId) throw new Error('INVENTORY_LIST_ID is not set in .env');
+  if (!(listId || '').trim()) throw new Error('listId is required');
 
   const schema = await fetchListSchema(client, listId);
   const { columnIdFor } = mapSchemaColumns(schema);
@@ -140,12 +139,11 @@ async function validateInventoryListConfig({ client, logger }) {
 }
 
 /**
- * Read the inventory list and return every row, parsed.
+ * Read one location's inventory list and return every row, parsed.
  */
-async function getInventoryItems({ client, logger }) {
+async function getInventoryItems({ client, logger, listId }) {
   const log = logger || console;
-  const listId = (process.env.INVENTORY_LIST_ID || '').trim();
-  if (!listId) throw new Error('INVENTORY_LIST_ID is not set in .env');
+  if (!(listId || '').trim()) throw new Error('listId is required');
 
   const schema = await fetchListSchema(client, listId);
   const { columnIdFor, columnMeta } = mapSchemaColumns(schema);

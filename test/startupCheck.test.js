@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { assertRequiredEnvVars } = require('../startupCheck');
 
-const REQUIRED = ['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'INVENTORY_LIST_ID', 'APPROVAL_CHANNEL_ID'];
+const REQUIRED = ['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'LOCATIONS_JSON', 'APPROVAL_CHANNEL_ID'];
 
 function withEnv(overrides, fn) {
   const saved = {};
@@ -27,8 +27,8 @@ test('assertRequiredEnvVars', async t => {
   });
 
   await t.test('throws naming multiple missing vars', () => {
-    withEnv({ SLACK_BOT_TOKEN: '', INVENTORY_LIST_ID: '' }, () => {
-      assert.throws(() => assertRequiredEnvVars(), /SLACK_BOT_TOKEN.*INVENTORY_LIST_ID/);
+    withEnv({ SLACK_BOT_TOKEN: '', LOCATIONS_JSON: '' }, () => {
+      assert.throws(() => assertRequiredEnvVars(), /SLACK_BOT_TOKEN.*LOCATIONS_JSON/);
     });
   });
 

@@ -1,7 +1,9 @@
 /**
- * One reorder cycle: read the inventory list, flag items below threshold,
- * and post a single batched Approve/Deny prompt covering all of them.
- * Skips entirely if a prior cycle's batch is still awaiting approval, so a
+ * One reorder cycle: read one location's inventory list, flag items below
+ * threshold, and post a single batched Approve/Deny prompt covering all of
+ * them to the shared approval channel, tagged with the location name (FR-27
+ * — all locations post to one APPROVAL_CHANNEL_ID). Skips that location
+ * entirely if a prior cycle's batch for it is still awaiting approval, so a
  * still-low item doesn't get re-prompted every cycle (see FR-02).
  */
 
@@ -9,23 +11,26 @@ const { randomUUID } = require('crypto');
 const { getInventoryItems, itemsNeedingReorder } = require('./inventoryList');
 const { buildReorderBlocks } = require('./blockKit');
 const pendingStore = require('./pendingStore');
+const { parseLocations } = require('./locations');
 
-async function runReorderCycle({ client, logger }) {
+async function runReorderCycle({ client, logger, location }) {
   const log = logger || console;
   const channel = (process.env.APPROVAL_CHANNEL_ID || '').trim();
   if (!channel) throw new Error('APPROVAL_CHANNEL_ID is not set in .env');
 
-  if (pendingStore.list().length > 0) {
-    const msg = 'A reorder batch is still pending approval — skipping this cycle.';
+  const alreadyPending = pendingStore.list().some(draft => draft.locationName === location.name);
+  if (alreadyPending) {
+    const msg = `[${location.name}] A reorder batch is still pending approval — skipping this cycle.`;
     log.info ? log.info(msg) : log.log(msg);
     return [];
   }
 
-  const items = await getInventoryItems({ client, logger: log });
+  const items = await getInventoryItems({ client, logger: log, listId: location.listId });
   const toReorder = itemsNeedingReorder(items);
 
   if (toReorder.length === 0) {
-    log.info ? log.info('No items below threshold — no prompt posted.') : log.log('No items below threshold — no prompt posted.');
+    const msg = `[${location.name}] No items below threshold — no prompt posted.`;
+    log.info ? log.info(msg) : log.log(msg);
     return [];
   }
 
@@ -38,15 +43,29 @@ async function runReorderCycle({ client, logger }) {
 
   const result = await client.chat.postMessage({
     channel,
-    text: `Reorder needed: ${draftItems.length} item(s)`,
-    blocks: buildReorderBlocks({ draftId, draftItems })
+    text: `[${location.name}] Reorder needed: ${draftItems.length} item(s)`,
+    blocks: buildReorderBlocks({ draftId, draftItems, locationName: location.name })
   });
 
-  pendingStore.put(draftId, { draftId, items: draftItems, channel, ts: result.ts });
+  pendingStore.put(draftId, { draftId, locationName: location.name, items: draftItems, channel, ts: result.ts });
 
   const posted = draftItems.map(({ item, qty }) => ({ draftId, item, qty }));
-  log.info ? log.info(`Posted 1 batch reorder prompt for ${posted.length} item(s).`) : log.log(`Posted 1 batch reorder prompt for ${posted.length} item(s).`);
+  const msg = `[${location.name}] Posted 1 batch reorder prompt for ${posted.length} item(s).`;
+  log.info ? log.info(msg) : log.log(msg);
   return posted;
 }
 
-module.exports = { runReorderCycle };
+/** Run a reorder cycle independently for every configured location (FR-27). */
+async function runAllLocationCycles({ client, logger }) {
+  const log = logger || console;
+  const locations = parseLocations();
+
+  const results = [];
+  for (const location of locations) {
+    const posted = await runReorderCycle({ client, logger: log, location });
+    results.push({ location: location.name, posted });
+  }
+  return results;
+}
+
+module.exports = { runReorderCycle, runAllLocationCycles };

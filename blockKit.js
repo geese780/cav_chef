@@ -1,6 +1,8 @@
 /**
  * Block Kit builders for the batched reorder prompt (all items below
- * threshold in one cycle, one Approve/Deny) and its resolved state.
+ * threshold in one cycle, one Approve/Deny) and its resolved state. Every
+ * message is tagged with the location name since all locations share one
+ * approval channel (see FR-27).
  */
 
 function formatCharge(expectedCharge) {
@@ -20,14 +22,14 @@ function itemLine({ item, qty, expectedCharge }) {
   );
 }
 
-function buildReorderBlocks({ draftId, draftItems }) {
+function buildReorderBlocks({ draftId, draftItems, locationName }) {
   return [
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
         text:
-          `*Reorder needed — ${draftItems.length} item(s)*\n` +
+          `*[${locationName}] Reorder needed — ${draftItems.length} item(s)*\n` +
           draftItems.map(itemLine).join('\n') +
           `\n\n*Total expected charge:* ${formatCharge(totalCharge(draftItems))}`
       }
@@ -54,7 +56,7 @@ function buildReorderBlocks({ draftId, draftItems }) {
   ];
 }
 
-function buildResolvedBlocks({ draftItems, decision, byUserId, orderResults }) {
+function buildResolvedBlocks({ draftItems, decision, byUserId, orderResults, locationName }) {
   const header =
     decision === 'approved'
       ? `✅ Approved by <@${byUserId}> — mock orders placed`
@@ -72,7 +74,7 @@ function buildResolvedBlocks({ draftItems, decision, byUserId, orderResults }) {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `*Reorder — ${draftItems.length} item(s)*\n${header}\n${lines.join('\n')}`
+        text: `*[${locationName}] Reorder — ${draftItems.length} item(s)*\n${header}\n${lines.join('\n')}`
       }
     }
   ];
