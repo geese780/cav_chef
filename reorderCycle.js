@@ -1,7 +1,8 @@
 /**
  * One reorder cycle: read the inventory list, flag items below threshold,
- * and post an Approve/Deny prompt for each. No cross-cycle de-dup yet — a
- * row that's still low next cycle gets a new prompt (see FR-02).
+ * and post a single batched Approve/Deny prompt covering all of them. No
+ * cross-cycle de-dup yet — rows still low next cycle get a new prompt
+ * (see FR-02).
  */
 
 const { randomUUID } = require('crypto');
@@ -17,32 +18,28 @@ async function runReorderCycle({ client, logger }) {
   const items = await getInventoryItems({ client, logger: log });
   const toReorder = itemsNeedingReorder(items);
 
-  const posted = [];
-  for (const item of toReorder) {
-    const draftId = randomUUID();
-    const qty = item.reorderQty;
-    const expectedCharge = item.unitPrice !== undefined ? item.unitPrice * qty : undefined;
-
-    const result = await client.chat.postMessage({
-      channel,
-      text: `Reorder needed: ${item.name || item.asin}`,
-      blocks: buildReorderBlocks({ draftId, item, qty, expectedCharge })
-    });
-
-    pendingStore.put(draftId, {
-      draftId,
-      rowId: item.rowId,
-      item,
-      qty,
-      expectedCharge,
-      channel,
-      ts: result.ts
-    });
-
-    posted.push({ draftId, item, qty });
+  if (toReorder.length === 0) {
+    log.info ? log.info('No items below threshold — no prompt posted.') : log.log('No items below threshold — no prompt posted.');
+    return [];
   }
 
-  log.info ? log.info(`Posted ${posted.length} reorder prompt(s).`) : log.log(`Posted ${posted.length} reorder prompt(s).`);
+  const draftId = randomUUID();
+  const draftItems = toReorder.map(item => {
+    const qty = item.reorderQty;
+    const expectedCharge = item.unitPrice !== undefined ? item.unitPrice * qty : undefined;
+    return { rowId: item.rowId, item, qty, expectedCharge };
+  });
+
+  const result = await client.chat.postMessage({
+    channel,
+    text: `Reorder needed: ${draftItems.length} item(s)`,
+    blocks: buildReorderBlocks({ draftId, draftItems })
+  });
+
+  pendingStore.put(draftId, { draftId, items: draftItems, channel, ts: result.ts });
+
+  const posted = draftItems.map(({ item, qty }) => ({ draftId, item, qty }));
+  log.info ? log.info(`Posted 1 batch reorder prompt for ${posted.length} item(s).`) : log.log(`Posted 1 batch reorder prompt for ${posted.length} item(s).`);
   return posted;
 }
 
