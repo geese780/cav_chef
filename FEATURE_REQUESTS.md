@@ -393,19 +393,44 @@ the expected vs actual total, and the resulting order id — verified live, abov
 *Gated on the Amazon Business Order Placement role being provisioned.*
 
 ### FR-14 — Implement & verify `placeOrderLive` · P0 (for live)
-`[ ]`
-Complete the live request in `orderingClient.js`. Verify `lineItems`, `attributes`, and
-`expectations` field names, the endpoint path, and API version against the current
-"Placing an order" reference — the sketched shape is unverified. Keep the `ExpectedCharge`
-expectation.
+`[~]`
+Implemented against public docs — no Amazon Business credentials/Order-Placement-role
+access exist yet, so this is coded but genuinely **unverified**, exactly the risk this
+FR calls out ("the sketched shape is unverified"). Sourced from
+[Placing an order](https://docs.business.amazon.com/docs/placing-an-order) and the
+[Ordering API overview](https://amazon-business-group-2.readme.io/docs/ordering-api):
+`POST https://na.business-api.amazon.com/ordering/2022-10-30/orders`, headers
+`accept: application/json` + `x-amz-access-token`, body `{externalId, lineItems[],
+attributes[], expectations[]}` with order-level attributes (`Region`,
+`SelectedPaymentMethodReference`, `BuyingGroupReference`, `BuyerReference`,
+`ShippingAddress`, `SelectedProductReference`, `PurchaseOrderNumber`) and the
+`ExpectedCharge` expectation (`amount` + `source`) kept as required. `buildOrderRequestBody`
+in `orderingClient.js` is split out from the network call specifically so its shape is
+unit-testable without live credentials.
+**Explicitly flagged as unconfirmed, not to be trusted at face value:** the EU/FE base
+URLs (`eu.`/`fe.` prefix) are inferred by pattern from the confirmed NA URL, not
+independently sourced; the exact wire shape of each attribute's `value` (object vs.
+string) is the least-confirmed part of the whole sketch. **Do not flip `AMAZON_MODE=live`
+for a real order until this has been checked against a real sandbox/live response** —
+that's exactly why this stays `[~]` and not `[x]`.
 **Accept:** a live order for one cheap, returnable item succeeds; a deliberately low
-`ExpectedCharge` causes Amazon to reject as expected.
+`ExpectedCharge` causes Amazon to reject as expected. **Neither half of this is
+verifiable yet** — no live credentials exist to test against.
 
 ### FR-15 — LWA access-token caching & refresh · P1
-`[ ]`
-Cache the Login-with-Amazon access token and refresh before expiry (~1h) instead of
-exchanging on every call.
-**Accept:** consecutive orders reuse a cached token; an expired token refreshes transparently.
+`[~]`
+Implemented alongside FR-14 in `amazonAuth.js` (same unverified-pending-credentials
+caveat): `getAccessToken()` caches the token and refreshes automatically once within
+60s of the documented `expires_in` (~3600s) instead of exchanging on every call.
+Unit-tested with a mocked `fetch` (`test/amazonAuth.test.js`): missing-credentials
+error, successful exchange, cache hit on a second call, forced refresh once within
+the 60s margin, and the token-exchange-failure error path — all of which are
+real, verifiable logic regardless of live credentials, unlike FR-14's request/response
+shape which can only be confirmed against Amazon's actual service.
+**Accept:** consecutive orders reuse a cached token (verified via mocked fetch — a
+second `getAccessToken()` call makes zero network calls); an expired token refreshes
+transparently (verified — a token within the 60s margin triggers exactly one more
+fetch, returning a new token).
 
 ### FR-16 — Ship-to address selection · P2
 `[ ]`
@@ -484,5 +509,7 @@ Expand from the single-user test group to real approvers/buyers once the above h
    pre-booking check-in notification all live.
 3. ~~FR-06~~ ~~FR-07~~ done — Phase 2's reliability floor (state + idempotency) is complete.
 4. ~~FR-10~~ ~~FR-11~~ ~~FR-13~~ done — Phase 3 (spend safety & governance) is complete.
-5. FR-14 (+ FR-15) — go live on one item once the role clears.
+5. FR-14 (+ FR-15) — sketched against public docs, `[~]` not `[x]`; verify against a
+   real order once the Amazon Business Order Placement role clears, then go live on
+   one item.
 6. Everything else as you harden toward wider rollout.

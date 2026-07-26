@@ -40,14 +40,15 @@ approver via a "Confirm at new price" button (or the same approver, with
 Deny still works without one. Every prompt, decision, and order result is
 durably logged (FR-13) — `npm run audit-log [draftId]` retrieves who decided,
 when, the items, expected vs. actual charge, and the resulting order id.
-Still to do, notably:
 
-- **No live Amazon integration** — `placeOrder` always mocks (FR-14).
-
-Phase 3 (spend safety & governance) is done, but that alone isn't a green light
-to flip `AMAZON_MODE=live` — FR-14 (the live order request itself) still needs
-implementing and verifying against Amazon's real API once the Amazon Business
-Order Placement role is provisioned.
+Phase 3 (spend safety & governance) is fully done. Live Amazon ordering
+(FR-14/FR-15) is *coded* — the Ordering API request, LWA auth, and token
+caching all exist in `orderingClient.js`/`amazonAuth.js` — but genuinely
+**unverified**: there are no Amazon Business credentials yet to test against,
+so it's built from public docs and explicitly not to be trusted at face value.
+`AMAZON_MODE` still defaults to (and should stay) `mock` until this is checked
+against a real order — see FR-14 in `FEATURE_REQUESTS.md` for exactly what's
+confirmed vs. inferred.
 
 ## Setup
 
@@ -248,3 +249,33 @@ npm run audit-log <draftId>
 Prints the full timeline for one draft — e.g. `posted` → `flagged_second_approval`
 → `approved` — showing who decided, when, the items, expected vs. actual charge
 per item, and the resulting order id.
+
+### Live Amazon ordering (FR-14/FR-15) — coded, unverified
+
+**Do not set `AMAZON_MODE=live` for a real order yet.** This is implemented
+against Amazon's public Ordering API docs with no real credentials to test
+against — treat it as a sketch to verify, not a working integration. See
+FR-14 in `FEATURE_REQUESTS.md` for exactly which parts are confirmed vs.
+inferred from the docs.
+
+Once you have the Amazon Business **Order Placement** role and LWA app
+credentials, fill in:
+
+```
+AMAZON_CLIENT_ID=
+AMAZON_CLIENT_SECRET=
+AMAZON_REFRESH_TOKEN=
+AMAZON_REGION=na          # na | eu | fe
+AMAZON_REGION_CODE=US     # the Region attribute's value, e.g. US/CA/MX for na
+AMAZON_PAYMENT_METHOD_ID=
+AMAZON_BUYING_GROUP_ID=
+AMAZON_BUYER_EMAIL=
+AMAZON_SHIP_TO_ADDRESS_ID=
+```
+
+Then, before ever pointing this at a real spend-capable account: set
+`AMAZON_MODE=live`, place one cheap/returnable item as a dry run, confirm the
+order actually appears in Amazon Business, and cross-check `orderingClient.js`'s
+request/response handling against what Amazon actually returned — the EU/FE
+base URLs and the exact attribute wire format are the least-confirmed parts
+and most likely to need fixing first.
