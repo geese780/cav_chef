@@ -73,8 +73,7 @@ corrupt the cell (update only after order success).
 ## Phase 1.5 — Scheduling & multi-location
 *Needed before real deployment: replaces manual/weekly triggering and generalizes
 from one location to N. Do FR-27 before FR-28 — the trigger should already be
-looping over locations before it gets smarter about timing. FR-27/FR-28 are done;
-FR-29 (added later, a different notification type) is still open.*
+looping over locations before it gets smarter about timing. All three FRs done.*
 
 ### FR-27 — Multi-location config & fan-out · P1
 `[x]`
@@ -134,33 +133,58 @@ configured lead time before it (verified live, above); a manual trigger
 (`npm run run-reorder-cycle`) still works as a per-location override.
 
 ### FR-29 — Pre-booking inventory check-in notification · P1
-`[ ]`
+`[x]`
 Separate from FR-28's 48h auto-reorder trigger: 216h (9 days) before a
 location's next booking (same shared-calendar `locationMatch` lookup as FR-28,
-reusing `googleCalendar.js`/`locations.js`), post a notification to
+reusing `googleCalendar.js`/`locations.js` — `checkin.js`'s `pollCheckins`
+mirrors `scheduler.js`'s `pollDueLocations`), post a notification to
 `APPROVAL_CHANNEL_ID`, tagged `[LocationName]`, showing that location's current
-inventory (on-hand/threshold per item — same List read as the reorder cycle,
-but informational only, no Approve/Deny, no orders placed) with a single
-**Done**/**Confirmed** button. This is a manual physical-stock-check prompt for
+inventory (on-hand/threshold per item, via `getInventoryItems` — informational
+only, no Approve/Deny, no orders placed) with a single **Done** button
+(`buildCheckinBlocks` in `blockKit.js`). Manual physical-stock-check prompt for
 a human, not a reorder decision.
-The notification stays open and **re-pings every 24h** if unacknowledged —
-new escalation behavior, distinct from every existing prompt in this system
-(reorder prompts never repeat; FR-12 will *expire* stale ones, the opposite of
-re-pinging). Needs its own persistent tracking (who/when acknowledged, which
-booking it's for) so a restart doesn't lose the escalation state or double-post
-for the same booking — likely a new table alongside `pendingStore`'s SQLite
-file, not a repurposing of the reorder-draft one (different lifecycle: no
-claim/place/remove, just posted → escalating → acknowledged).
-Two new config knobs: lead time (216h, distinct from
-`CALENDAR_LEAD_TIME_HOURS`) and re-ping interval (24h) — both should be
-env-var-overridable following the existing `leadTimeHours()`/
-`pollIntervalMinutes()` pattern in `scheduler.js`.
-**Accept:** a booking 216h out gets exactly one initial notification; if
-unacknowledged, a new ping appears roughly every 24h (not a duplicate thread,
-either updates the same message or clearly supersedes it); clicking Done/Confirmed
-stops all further pings and logs who/when; a restart mid-escalation doesn't lose
-track of what's still outstanding or repost a fresh notification for an already-
-acknowledged booking.
+The notification **re-pings every 24h** if unacknowledged, as a lightweight new
+message (no inventory re-fetch — `buildCheckinReminderBlocks`) rather than an
+edit, so channel history shows the escalation. New persistent store
+(`checkinStore.js`, own `checkins` table in the same SQLite file as
+`pendingStore.js`, different lifecycle: no claim→place→remove, just
+posted → re-pinged → acknowledged) keyed by `${locationName}::${bookingStartISO}`
+(`buildCheckinId`) so a new booking for the same location gets a fresh record
+instead of colliding with an already-acknowledged one. `decideCheckinAction` in
+`checkin.js` is the pure decision function (`none`/`create`/`reping`/`wait`),
+unit-tested for the lead-time boundary, the reping-interval boundary, and the
+already-acknowledged case. `checkinStore.claim` reuses FR-07's atomic-UPDATE
+pattern so a double-click can't process twice.
+Two new config knobs, both env-var-overridable with the same pattern as
+`leadTimeHours()`/`pollIntervalMinutes()`: `CHECKIN_LEAD_TIME_HOURS` (default
+216) and `CHECKIN_REPING_HOURS` (default 24). `app.js`'s existing poll loop now
+runs both `pollDueLocations` and `pollCheckins` each tick. `npm run
+run-checkin-poll` triggers a poll manually for testing, mirroring
+`run-reorder-cycle`.
+**Bug caught during live verification, fixed same session:** since every
+re-ping is a distinct Slack message all sharing one `checkinId`/button, a click
+on a message that *isn't* the one that resolved the check-in used to do
+nothing — `claim()` correctly returned `undefined` (already acknowledged) but
+the handler then just returned early, leaving that specific message stuck
+showing a live but inert Done button with zero feedback. Fixed in
+`app.js`'s `confirm_checkin` handler: on a failed claim, fall back to
+`checkinStore.get()` and still update the clicked message to show who actually
+confirmed, instead of silently no-op-ing. Covered by a new test in
+`test/checkinStore.test.js` asserting `get()` returns the acknowledged record
+(with the *original* claimer, not the second caller) after a failed claim.
+Live-verified end to end against the real workspace across all 3 locations:
+initial creation for WeHo and Rock Nashville (both within 216h), Rock Lititz
+correctly skipped (480h out, beyond lead time) until temporarily overriding
+`CHECKIN_LEAD_TIME_HOURS`/`CHECKIN_REPING_HOURS` to prove the `create` → `reping`
+path live without waiting 24 real hours; Done confirmed correctly from both an
+original message and a re-ping message (post-fix); a restart correctly saw
+already-open records and didn't duplicate them.
+**Accept:** a booking 216h out gets exactly one initial notification (verified);
+if unacknowledged, a new ping appears roughly every 24h as a new message
+(verified, accelerated); clicking Done stops all further pings and logs
+who/when (verified); a restart mid-escalation doesn't lose track of what's
+still outstanding or repost a fresh notification for an already-acknowledged
+booking (verified — de-dup held across a restart during live testing).
 
 ---
 
@@ -352,9 +376,9 @@ Expand from the single-user test group to real approvers/buyers once the above h
 ## Suggested near-term order
 
 1. ~~FR-02~~ ~~FR-03~~ ~~FR-01~~ done — correctness locked in while still in mock mode.
-2. ~~FR-27~~ ~~FR-28~~ done — multi-location + calendar-driven reorder trigger both live.
+2. ~~FR-27~~ ~~FR-28~~ ~~FR-29~~ done — multi-location, calendar-driven reorder trigger, and
+   pre-booking check-in notification all live.
 3. ~~FR-06~~ ~~FR-07~~ done — Phase 2's reliability floor (state + idempotency) is complete.
-4. FR-29 — pre-booking inventory check-in notification (independent of spend safety, can slot in anytime).
-5. FR-10, FR-11, FR-13 — spend safety (per-location), before any live consideration.
-6. FR-14 (+ FR-15) — go live on one item once the role clears.
-7. Everything else as you harden toward wider rollout.
+4. FR-10, FR-11, FR-13 — spend safety (per-location), before any live consideration.
+5. FR-14 (+ FR-15) — go live on one item once the role clears.
+6. Everything else as you harden toward wider rollout.

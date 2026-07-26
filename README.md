@@ -23,8 +23,11 @@ within the lead time, instead of a flat schedule; a location without one just
 runs on manual trigger. Pending drafts persist across restarts in SQLite
 (`data/cav_chef.sqlite`, FR-06) — an in-flight approval survives a crash or
 redeploy. Approving/denying atomically claims the draft first (FR-07), so a
-double-click or redelivered event can't place duplicate orders. Still to do,
-notably:
+double-click or redelivered event can't place duplicate orders. A separate
+pre-booking inventory check-in notification (FR-29) posts 216h before a
+location's next booking with current stock levels and a Done button, re-pinging
+every 24h until acknowledged — independent of the 48h auto-reorder trigger.
+Still to do, notably:
 
 - **No approver allowlist** — anyone who can click Approve/Deny can (FR-10).
 - **No budget guardrails** — there is no spend cap yet (FR-11).
@@ -115,6 +118,33 @@ it would trigger a cycle right now, without posting anything or running any
 cycle. A location with no `calendarId` set just reports "manual trigger only" —
 no Google call is made for it, so this is safe to run before any calendar is
 configured.
+
+### Pre-booking inventory check-in (FR-29)
+
+Separate from the 48h auto-reorder trigger above: 216h (9 days) before a
+location's next booking, `npm start` posts a notification showing that
+location's current inventory (on-hand/threshold, no ordering action) with a
+single **Done** button, tagged `[LocationName]`. If nobody clicks Done, a new
+lightweight reminder message posts every 24h until someone does. Uses the same
+shared-calendar `locationMatch` lookup as FR-28, so no extra calendar setup is
+needed once that's configured — a location with no `calendarId` is skipped here
+too.
+
+Tune `CHECKIN_LEAD_TIME_HOURS` (default 216) and `CHECKIN_REPING_HOURS`
+(default 24) in `.env` if the defaults don't fit.
+
+```sh
+npm run run-checkin-poll
+```
+
+Manually triggers a check-in poll against a running `npm start` process, for
+testing without waiting on the real cadence.
+
+Note: every re-ping is a new Slack message, and all of them (the original post
+and every re-ping) share the same underlying record — clicking Done on *any* of
+them resolves it, and clicking Done on one *after* it's already been resolved
+elsewhere still updates that message to show who actually confirmed, rather
+than doing nothing.
 
 ## Running the approve/deny flow end to end
 

@@ -1,8 +1,9 @@
 /**
  * Block Kit builders for the batched reorder prompt (all items below
- * threshold in one cycle, one Approve/Deny) and its resolved state. Every
- * message is tagged with the location name since all locations share one
- * approval channel (see FR-27).
+ * threshold in one cycle, one Approve/Deny) and its resolved state, plus the
+ * pre-booking inventory check-in notification (FR-29, Done/Confirmed only,
+ * no ordering action). Every message is tagged with the location name since
+ * all locations share one approval channel (see FR-27).
  */
 
 function formatCharge(expectedCharge) {
@@ -80,4 +81,85 @@ function buildResolvedBlocks({ draftItems, decision, byUserId, orderResults, loc
   ];
 }
 
-module.exports = { buildReorderBlocks, buildResolvedBlocks };
+function checkinItemLine(item) {
+  return `• *${item.name || item.asin}* — On hand: ${item.onHand ?? '?'} · Threshold: ${item.threshold ?? '?'}`;
+}
+
+/** Initial pre-booking check-in notification (FR-29): current inventory, no
+ * ordering action — a single Done/Confirmed button. */
+function buildCheckinBlocks({ checkinId, locationName, bookingStart, items }) {
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text:
+          `*[${locationName}] Inventory check-in — booking on ${bookingStart.toISOString().slice(0, 10)}*\n` +
+          `Please physically verify stock ahead of this booking.\n\n` +
+          items.map(checkinItemLine).join('\n')
+      }
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Done' },
+          style: 'primary',
+          action_id: 'confirm_checkin',
+          value: checkinId
+        }
+      ]
+    }
+  ];
+}
+
+/** Lightweight re-ping (FR-29, every CHECKIN_REPING_HOURS while unacknowledged) —
+ * no inventory re-fetch, just a nag with the same button/checkinId. */
+function buildCheckinReminderBlocks({ checkinId, locationName, bookingStart }) {
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text:
+          `*[${locationName}] Inventory check-in — still awaiting confirmation*\n` +
+          `Booking on ${bookingStart.toISOString().slice(0, 10)}.`
+      }
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Done' },
+          style: 'primary',
+          action_id: 'confirm_checkin',
+          value: checkinId
+        }
+      ]
+    }
+  ];
+}
+
+function buildCheckinResolvedBlocks({ locationName, bookingStart, byUserId }) {
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text:
+          `*[${locationName}] Inventory check-in — booking on ${bookingStart.toISOString().slice(0, 10)}*\n` +
+          `✅ Confirmed by <@${byUserId}>`
+      }
+    }
+  ];
+}
+
+module.exports = {
+  buildReorderBlocks,
+  buildResolvedBlocks,
+  buildCheckinBlocks,
+  buildCheckinReminderBlocks,
+  buildCheckinResolvedBlocks
+};

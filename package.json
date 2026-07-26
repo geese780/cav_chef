@@ -8,7 +8,8 @@
     "test": "node --test",
     "check-inventory-list": "node scripts/check-inventory-list.js",
     "check-calendar": "node scripts/check-calendar.js",
-    "run-reorder-cycle": "node scripts/run-reorder-cycle.js"
+    "run-reorder-cycle": "node scripts/run-reorder-cycle.js",
+    "run-checkin-poll": "node scripts/run-checkin-poll.js"
   },
   "license": "UNLICENSED",
   "dependencies": {
