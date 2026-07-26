@@ -10,7 +10,8 @@
     "check-calendar": "node scripts/check-calendar.js",
     "run-reorder-cycle": "node scripts/run-reorder-cycle.js",
     "run-checkin-poll": "node scripts/run-checkin-poll.js",
-    "audit-log": "node scripts/audit-log.js"
+    "audit-log": "node scripts/audit-log.js",
+    "lint": "eslint ."
   },
   "license": "UNLICENSED",
   "dependencies": {
@@ -18,5 +19,9 @@
     "@slack/web-api": "^8.0.0",
     "dotenv": "~17.4.2",
     "googleapis": "^173.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.0"
   }
 }

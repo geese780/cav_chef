@@ -98,9 +98,14 @@ successful poll time, and `placeOrder`/poll failures post an alert to
 
 ```sh
 npm install
+npm run lint
 npm test
 npm run check-inventory-list
 ```
+
+`npm run lint` and `npm test` both run in CI (`.github/workflows/ci.yml`) on
+every PR into `main` and every push to `main` — a failing lint or test blocks
+the run (FR-22).
 
 `check-inventory-list` prints every row the bot can read for every configured
 location and flags which ones would currently get a reorder prompt — no messages

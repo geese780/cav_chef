@@ -531,9 +531,20 @@ Move tokens out of `.env` into a managed secret store for production.
 ## Phase 6 — Deployment & rollout
 
 ### FR-22 — CI: lint + test on PR · P2
-`[ ]`
-Run lint and the test suite on every pull request.
-**Accept:** a PR with failing tests is blocked.
+`[x]`
+No lint tooling existed at all before this — added ESLint (`eslint.config.js`,
+flat config, `eslint:recommended` only, no opinionated style/formatting rules)
+as a dev dependency, plus `npm run lint`. Running it for the first time
+surfaced 5 real (if minor) findings — every catch-and-rethrow in
+`locations.js`/`startupCheck.js` built a new `Error` without attaching the
+original as `.cause`, silently losing the original stack trace. Fixed all 5
+with `{ cause: err }` rather than suppressing the rule, since it's a
+legitimate debuggability improvement in the same spirit as FR-18.
+`.github/workflows/ci.yml`: runs on every PR into `main` and every push to
+`main` — checkout, Node 24, `npm ci`, `npm run lint`, `npm test`.
+**Accept:** a PR with failing tests is blocked — the workflow fails the run on
+either `npm run lint` or `npm test` failing, and either step failing fails the
+job.
 
 ### FR-23 — Containerize & deploy · P1
 `[ ]`

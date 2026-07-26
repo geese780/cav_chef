@@ -33,7 +33,7 @@ async function assertApprovalChannel(client) {
     await client.conversations.info({ channel });
   } catch (err) {
     const reason = (err.data && err.data.error) || err.message;
-    throw new Error(`APPROVAL_CHANNEL_ID "${channel}" is not reachable: ${reason}`);
+    throw new Error(`APPROVAL_CHANNEL_ID "${channel}" is not reachable: ${reason}`, { cause: err });
   }
 }
 
@@ -47,7 +47,9 @@ async function assertLocationCalendars(locations) {
       await getNextEventStart({ calendar, calendarId: location.calendarId, locationMatch: location.locationMatch });
     } catch (err) {
       const reason = (err.errors && err.errors[0] && err.errors[0].reason) || err.message;
-      throw new Error(`Location "${location.name}" calendarId "${location.calendarId}" is not reachable: ${reason}`);
+      throw new Error(`Location "${location.name}" calendarId "${location.calendarId}" is not reachable: ${reason}`, {
+        cause: err
+      });
     }
   }
 }
@@ -59,7 +61,7 @@ async function assertApprovers(client) {
       await client.users.info({ user: userId });
     } catch (err) {
       const reason = (err.data && err.data.error) || err.message;
-      throw new Error(`APPROVER_ALLOWLIST user id "${userId}" is not a valid Slack user: ${reason}`);
+      throw new Error(`APPROVER_ALLOWLIST user id "${userId}" is not a valid Slack user: ${reason}`, { cause: err });
     }
   }
 }
@@ -74,7 +76,7 @@ async function validateStartupConfig({ client, logger }) {
     try {
       await validateInventoryListConfig({ client, logger, listId: location.listId });
     } catch (err) {
-      throw new Error(`Location "${location.name}" (listId ${location.listId}): ${err.message}`);
+      throw new Error(`Location "${location.name}" (listId ${location.listId}): ${err.message}`, { cause: err });
     }
   }
 

@@ -14,7 +14,7 @@ function parseLocations() {
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new Error(`LOCATIONS_JSON is not valid JSON: ${err.message}`);
+    throw new Error(`LOCATIONS_JSON is not valid JSON: ${err.message}`, { cause: err });
   }
 
   if (!Array.isArray(parsed) || parsed.length === 0) {
