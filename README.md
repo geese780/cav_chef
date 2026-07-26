@@ -29,9 +29,14 @@ location's next booking with current stock levels and a Done button, re-pinging
 every 24h until acknowledged — independent of the 48h auto-reorder trigger.
 Approve/Deny are restricted to an allowlist of Slack user ids (FR-10) — anyone
 else clicking gets a private "not authorized" message and the prompt stays
-open. Still to do, notably:
+open. A price-drift guardrail (FR-11) checks the current price against what
+was expected when a draft was posted: no meaningful change proceeds normally,
+a small increase proceeds with a note, and a $50+ increase — or a price that
+can't be verified at all, which is the current reality since no List has
+`unit_price` filled in yet — blocks placing and requires a second, distinct
+approver via a "Confirm at new price" button; Deny still works without one.
+Still to do, notably:
 
-- **No budget guardrails** — there is no spend cap yet (FR-11).
 - **No live Amazon integration** — `placeOrder` always mocks (FR-14).
 
 Do not point this at a real spend-capable Amazon account until at least Phase 3
@@ -53,7 +58,9 @@ Do not point this at a real spend-capable Amazon account until at least Phase 3
    links like `a.co/...` can't be resolved this way). Also needs `on_hand` (number
    — `in_stock`/`qty_on_hand` etc. also match) and `threshold` (number), plus
    optionally `reorder_qty` (number, defaults to 1 if missing) and `unit_price`
-   (number, used to compute the expected charge shown on each prompt).
+   (number, used to compute the expected charge shown on each prompt — also
+   what the FR-11 price-drift check compares against; without it, every
+   approval is treated as unverifiable and needs a second approver).
 5. Share each List with the bot user (or the workspace), and note each List's
    file ID.
 6. Set `LOCATIONS_JSON` in `.env` to a JSON array, one entry per location:
@@ -71,6 +78,9 @@ Do not point this at a real spend-capable Amazon account until at least Phase 3
    "Copy member ID"), e.g. `APPROVER_ALLOWLIST=U5EM8P96D,U0123456789`. Required
    — the app won't start without it, and boot fails if any id isn't a real
    Slack user.
+9. Tune `PRICE_DRIFT_THRESHOLD` (default 50 — the $ increase in a draft's
+   total that requires a second approver, see FR-11 below) in `.env` if it
+   doesn't fit.
 
 ```sh
 npm install
@@ -182,3 +192,25 @@ message in place. Only users in `APPROVER_ALLOWLIST` can do this (FR-10); anyone
 else gets a private "not authorized" message and the prompt stays open. A
 location with a batch still pending skips its next cycle rather than posting a
 duplicate (FR-02).
+
+### Price-drift guardrail (FR-11)
+
+Approve doesn't always place orders immediately. It first checks the draft's
+current total against what was expected when it was posted:
+
+- No increase, or a small one under `PRICE_DRIFT_THRESHOLD` — proceeds
+  normally (a small increase is noted in the resolved message, but doesn't
+  block).
+- An increase at/over the threshold, **or a price that can't be verified at
+  all** (any item missing `unit_price` on its List — the current state of all
+  3 Lists) — doesn't place anything. The message updates to show the
+  increase and a **Confirm at new price** button, tagged with who flagged it.
+
+A second, distinct approver (also in `APPROVER_ALLOWLIST`) has to click
+**Confirm at new price** before orders place — the same person who flagged it
+clicking again gets rejected with a private message. **Deny All** still
+cancels it either way, no second approver needed to cancel.
+
+There's no live Amazon price feed yet (see FR-14), so mock mode can't
+naturally produce drift — set `MOCK_PRICE_DRIFT_PER_UNIT` (a flat $ amount
+added to every unit's price) to simulate it for testing.

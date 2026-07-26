@@ -57,11 +57,22 @@ function buildReorderBlocks({ draftId, draftItems, locationName }) {
   ];
 }
 
-function buildResolvedBlocks({ draftItems, decision, byUserId, orderResults, locationName }) {
-  const header =
-    decision === 'approved'
-      ? `✅ Approved by <@${byUserId}> — mock orders placed`
-      : `🚫 Denied by <@${byUserId}>`;
+/** FR-11: an approved draft whose price crept up (but stayed under the
+ * drift threshold, so it didn't need a second approver) still shows the
+ * increase — informational only. */
+function driftNote(deltaTotal) {
+  return deltaTotal !== undefined && deltaTotal > 0
+    ? `\n_Note: total price increased by ${formatCharge(deltaTotal)} since this was flagged._`
+    : '';
+}
+
+function buildResolvedBlocks({ draftItems, decision, byUserId, orderResults, locationName, firstApproverId, deltaTotal }) {
+  const approvalNote =
+    firstApproverId && firstApproverId !== byUserId
+      ? `Flagged by <@${firstApproverId}>, confirmed by <@${byUserId}>`
+      : `Approved by <@${byUserId}>`;
+
+  const header = decision === 'approved' ? `✅ ${approvalNote} — mock orders placed` : `🚫 Denied by <@${byUserId}>`;
 
   const lines = draftItems.map(({ item, qty }, i) => {
     const orderId = orderResults && orderResults[i] && orderResults[i].orderId;
@@ -75,8 +86,52 @@ function buildResolvedBlocks({ draftItems, decision, byUserId, orderResults, loc
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `*[${locationName}] Reorder — ${draftItems.length} item(s)*\n${header}\n${lines.join('\n')}`
+        text:
+          `*[${locationName}] Reorder — ${draftItems.length} item(s)*\n${header}\n${lines.join('\n')}` +
+          (decision === 'approved' ? driftNote(deltaTotal) : '')
       }
+    }
+  ];
+}
+
+/** FR-11: a draft whose price drift hit/exceeded PRICE_DRIFT_THRESHOLD (or
+ * couldn't be verified at all) — blocks placing until a second, distinct
+ * approver confirms. */
+function buildPriceDriftBlocks({ draftId, draftItems, locationName, firstApproverId, expectedTotal, currentTotal, deltaTotal, hasUnknown }) {
+  const driftLine = hasUnknown
+    ? `Price could not be fully verified (missing unit price on one or more items) — needs a second approver.`
+    : `Total increased from ${formatCharge(expectedTotal)} to ${formatCharge(currentTotal)} ` +
+      `(+${formatCharge(deltaTotal)}) — needs a second approver.`;
+
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text:
+          `*[${locationName}] Reorder — ${draftItems.length} item(s)*\n` +
+          `⚠️ Flagged by <@${firstApproverId}> — ${driftLine}\n` +
+          draftItems.map(itemLine).join('\n')
+      }
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Confirm at new price' },
+          style: 'primary',
+          action_id: 'confirm_price_drift',
+          value: draftId
+        },
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Deny All' },
+          style: 'danger',
+          action_id: 'deny_reorder',
+          value: draftId
+        }
+      ]
     }
   ];
 }
@@ -159,6 +214,7 @@ function buildCheckinResolvedBlocks({ locationName, bookingStart, byUserId }) {
 module.exports = {
   buildReorderBlocks,
   buildResolvedBlocks,
+  buildPriceDriftBlocks,
   buildCheckinBlocks,
   buildCheckinReminderBlocks,
   buildCheckinResolvedBlocks

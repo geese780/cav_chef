@@ -5,13 +5,14 @@ config();
 
 const pendingStore = require('./pendingStore');
 const checkinStore = require('./checkinStore');
-const { placeOrder, buildIdempotencyKey } = require('./orderingClient');
-const { buildResolvedBlocks, buildCheckinResolvedBlocks } = require('./blockKit');
+const { placeOrder, buildIdempotencyKey, getCurrentPrice } = require('./orderingClient');
+const { buildResolvedBlocks, buildPriceDriftBlocks, buildCheckinResolvedBlocks } = require('./blockKit');
 const { validateStartupConfig } = require('./startupCheck');
 const { buildCalendarClient } = require('./googleCalendar');
 const { pollDueLocations, leadTimeHours, pollIntervalMinutes } = require('./scheduler');
 const { pollCheckins, checkinLeadTimeHours, checkinRepingHours } = require('./checkin');
 const { isApprover } = require('./approvers');
+const { priceDriftThreshold, evaluateDraftTotal } = require('./budget');
 
 /** CAV Slackbot — inventory reorder approvals (see FEATURE_REQUESTS.md). */
 const app = new App({
@@ -34,6 +35,41 @@ async function rejectUnlessApprover({ client, channel, byUserId, action }) {
   return true;
 }
 
+/** Places orders for a claimed/second-approved draft's already price-checked
+ * items and resolves the message. Shared by the immediate-approve and
+ * second-approval-confirmed paths. */
+async function placeAndResolve({ client, logger, resolved, byUserId, firstApproverId, deltaTotal }) {
+  const orderResults = [];
+  for (const { item, qty, currentCharge } of resolved.items) {
+    const idempotencyKey = buildIdempotencyKey(resolved.draftId, item.asin);
+    const { orderId } = await placeOrder({ item, qty, expectedCharge: currentCharge, idempotencyKey });
+    orderResults.push({ orderId });
+  }
+
+  await client.chat.update({
+    channel: resolved.channel,
+    ts: resolved.ts,
+    text: `[${resolved.locationName}] Reorder approved: ${resolved.items.length} item(s)`,
+    blocks: buildResolvedBlocks({
+      draftItems: resolved.items,
+      decision: 'approved',
+      byUserId,
+      orderResults,
+      locationName: resolved.locationName,
+      firstApproverId,
+      deltaTotal
+    })
+  });
+
+  pendingStore.remove(resolved.draftId);
+  logger.info(`[${resolved.locationName}] Approved batch ${resolved.draftId} by ${byUserId} — ${orderResults.length} mock order(s)`);
+}
+
+/** FR-11: price-drift guardrail — checks the current price against what was
+ * expected when the draft was posted; only escalates to a second approver
+ * when the total increase hits PRICE_DRIFT_THRESHOLD (or can't be verified
+ * at all), otherwise proceeds on the single click with a note if it crept
+ * up but stayed under threshold. */
 app.action('approve_reorder', async ({ ack, action, body, client, logger }) => {
   await ack();
 
@@ -41,30 +77,91 @@ app.action('approve_reorder', async ({ ack, action, body, client, logger }) => {
   const rejected = await rejectUnlessApprover({ client, channel: body.channel.id, byUserId, action: 'approve' });
   if (rejected) return;
 
+  // Peek (not claim yet) to compute drift; flagForSecondApproval/claim below
+  // each guard atomically on status, so a stale/duplicate click here still
+  // safely no-ops even though this read isn't itself the atomic step.
+  const draft = pendingStore.get(action.value);
+  if (!draft) return; // unknown/already resolved — no-op
+
+  const pricedItems = draft.items.map(di => ({ ...di, currentCharge: getCurrentPrice({ item: di.item, qty: di.qty }) }));
+  const evaluation = evaluateDraftTotal(pricedItems, priceDriftThreshold());
+
+  if (evaluation.requiresSecondApproval) {
+    const flagged = pendingStore.flagForSecondApproval(action.value, {
+      firstApprover: byUserId,
+      items: pricedItems,
+      expectedTotal: evaluation.expectedTotal,
+      currentTotal: evaluation.currentTotal,
+      deltaTotal: evaluation.deltaTotal
+    });
+    if (!flagged) return; // lost the race (already resolved elsewhere) — no-op
+
+    await client.chat.update({
+      channel: draft.channel,
+      ts: draft.ts,
+      text: `[${draft.locationName}] Reorder needs a second approver`,
+      blocks: buildPriceDriftBlocks({
+        draftId: action.value,
+        draftItems: pricedItems,
+        locationName: draft.locationName,
+        firstApproverId: byUserId,
+        expectedTotal: evaluation.expectedTotal,
+        currentTotal: evaluation.currentTotal,
+        deltaTotal: evaluation.deltaTotal,
+        hasUnknown: evaluation.hasUnknown
+      })
+    });
+    logger.info(
+      `[${draft.locationName}] Batch ${action.value} flagged for second approval by ${byUserId} ` +
+        `(delta ${evaluation.deltaTotal}, hasUnknown=${evaluation.hasUnknown})`
+    );
+    return;
+  }
+
   // Atomic claim (FR-07): guards against two concurrent approve_reorder
   // events for the same draft (double-click, redelivered event) both
   // placing orders — only one claim can succeed.
-  const draft = pendingStore.claim(action.value);
-  if (!draft) return; // already resolved, already claimed, or expired — no-op
+  const claimed = pendingStore.claim(action.value);
+  if (!claimed) return; // already resolved, already claimed, or expired — no-op
 
-  const orderResults = [];
-  for (const { item, qty, expectedCharge } of draft.items) {
-    const idempotencyKey = buildIdempotencyKey(draft.draftId, item.asin);
-    const { orderId } = await placeOrder({ item, qty, expectedCharge, idempotencyKey });
-    orderResults.push({ orderId });
-  }
-
-  await client.chat.update({
-    channel: draft.channel,
-    ts: draft.ts,
-    text: `[${draft.locationName}] Reorder approved: ${draft.items.length} item(s)`,
-    blocks: buildResolvedBlocks({ draftItems: draft.items, decision: 'approved', byUserId, orderResults, locationName: draft.locationName })
+  await placeAndResolve({
+    client,
+    logger,
+    resolved: { ...claimed, items: pricedItems },
+    byUserId,
+    deltaTotal: evaluation.deltaTotal
   });
-
-  pendingStore.remove(action.value);
-  logger.info(`[${draft.locationName}] Approved batch ${draft.draftId} by ${byUserId} — ${orderResults.length} mock order(s)`);
 });
 
+/** Second, distinct approver confirms a high-drift draft (FR-11) — must not
+ * be the same user who flagged it; that's enforced atomically in
+ * pendingStore.claimSecondApproval. */
+app.action('confirm_price_drift', async ({ ack, action, body, client, logger }) => {
+  await ack();
+
+  const byUserId = body.user.id;
+  const rejected = await rejectUnlessApprover({ client, channel: body.channel.id, byUserId, action: 'confirm' });
+  if (rejected) return;
+
+  const claimed = pendingStore.claimSecondApproval(action.value, { secondApprover: byUserId });
+  if (!claimed) {
+    const draft = pendingStore.get(action.value);
+    if (draft && draft.firstApprover === byUserId) {
+      await client.chat.postEphemeral({
+        channel: body.channel.id,
+        user: byUserId,
+        text: `🚫 A different approver than the one who flagged this needs to confirm it.`
+      });
+    }
+    return; // already resolved, or same-user attempt — no-op beyond the message above
+  }
+
+  await placeAndResolve({ client, logger, resolved: claimed, byUserId, firstApproverId: claimed.firstApprover });
+});
+
+// Denies from either 'pending' or 'awaiting_second_approval' (FR-11) —
+// canceling a high-drift order shouldn't require a second approver to show
+// up first.
 app.action('deny_reorder', async ({ ack, action, body, client, logger }) => {
   await ack();
 
@@ -72,7 +169,7 @@ app.action('deny_reorder', async ({ ack, action, body, client, logger }) => {
   const rejected = await rejectUnlessApprover({ client, channel: body.channel.id, byUserId, action: 'deny' });
   if (rejected) return;
 
-  const draft = pendingStore.claim(action.value);
+  const draft = pendingStore.claimForResolution(action.value);
   if (!draft) return; // already resolved, already claimed, or expired — no-op
 
   await client.chat.update({

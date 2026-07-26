@@ -286,11 +286,51 @@ user id in the allowlist fails boot with `user_not_found`, a valid one passes.
 "not authorized" message; the prompt stays open — verified live, above.
 
 ### FR-11 — Budget guardrails · P0
-`[ ]`
-Enforce a max per-order total and a rolling daily spend cap. If a draft exceeds either,
-either block it or require a second distinct approver.
-**Accept:** a draft over the per-order cap can't be single-approved; exceeding the daily
-cap blocks further orders until reset.
+`[x]`
+Reworked from the original static per-order/daily-cap spec into a **price-drift**
+guardrail, per direction from the user: rather than fixed dollar caps, compare
+each draft's expected total (computed when posted) against its current total
+(re-checked at approval time via `orderingClient.getCurrentPrice`, a seam for
+FR-14 to eventually source from Amazon's real cart price — no live source
+exists yet, so mock mode simulates drift via `MOCK_PRICE_DRIFT_PER_UNIT` for
+testing). `budget.js`'s pure `evaluateDraftTotal` sums the delta across all
+items and decides: no/negative drift → proceeds silently; drift under
+`PRICE_DRIFT_THRESHOLD` (default $50) → proceeds, but the resolved message
+notes the increase; drift at/over threshold, **or any item's price can't be
+verified at all** (missing `unit_price` — the current reality for all 3 real
+Lists) → blocks placing and requires a second, distinct approver.
+`pendingStore.js` gained a third status, `awaiting_second_approval`, and three
+new methods: `flagForSecondApproval` (first approve on a high-drift draft,
+'pending'-only), `claimSecondApproval` (second approve — atomically rejects
+the *same* user who flagged it, via `firstApprover === secondApprover` check
+before the claiming UPDATE), and `claimForResolution` (lets Deny cancel from
+either 'pending' or 'awaiting_second_approval', so canceling a flagged order
+doesn't need a second approver to show up first). `app.js` routes the first
+Approve click through the drift check; over-threshold posts
+`buildPriceDriftBlocks` (a "Confirm at new price" button, `confirm_price_drift`
+action) instead of placing orders; the second approver's click reuses the
+price locked in at flag time rather than re-checking (avoids compounding
+drift across two checks).
+Unit-tested thoroughly (`test/budget.test.js`, `test/pendingStore.test.js`,
+`test/orderingClient.test.js`): drift boundaries, missing-price handling,
+same-user rejection, distinct-approver success, deny-from-either-status.
+Live-verified against the real workspace for everything reproducible with one
+real approver and no live price data (which is the actual current state of
+all 3 Lists): a real Approve click correctly flagged for second approval
+(missing price → unverifiable); the same user attempting "Confirm at new
+price" was correctly rejected with an ephemeral message and the draft stayed
+untouched (confirmed via direct DB read); Deny correctly canceled both a plain
+pending draft and one already flagged for second approval. The distinct-second-
+approver-succeeds path and the low-drift single-approve-with-note path aren't
+independently live-reproducible right now (one real user, no `unit_price`
+data anywhere) — both rely on the unit tests above, which directly exercise
+the exact same atomic store methods and pure decision logic the live paths
+use.
+**Accept (reworked from the original static-cap wording):** a draft with
+unverifiable or high-drift pricing can't be single-approved (verified live);
+canceling it via Deny doesn't require a second approver (verified live); a
+second, distinct approver is required to place it, and the same approver who
+flagged it cannot also confirm it (claim path unit-tested).
 
 ### FR-12 — Pending-approval expiry · P1
 `[ ]`
@@ -400,6 +440,6 @@ Expand from the single-user test group to real approvers/buyers once the above h
 2. ~~FR-27~~ ~~FR-28~~ ~~FR-29~~ done — multi-location, calendar-driven reorder trigger, and
    pre-booking check-in notification all live.
 3. ~~FR-06~~ ~~FR-07~~ done — Phase 2's reliability floor (state + idempotency) is complete.
-4. ~~FR-10~~ done. FR-11, FR-13 — spend safety (per-location), before any live consideration.
+4. ~~FR-10~~ ~~FR-11~~ done. FR-13 — spend safety (per-location), before any live consideration.
 5. FR-14 (+ FR-15) — go live on one item once the role clears.
 6. Everything else as you harden toward wider rollout.

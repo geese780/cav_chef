@@ -16,6 +16,28 @@ function buildIdempotencyKey(draftId, asin) {
 }
 
 /**
+ * Current price for one item, checked at approval time for the price-drift
+ * guardrail (FR-11) — distinct from `item.unitPrice`, which is only a
+ * snapshot from whenever the List was last read. Mock mode simulates drift
+ * via MOCK_PRICE_DRIFT_PER_UNIT (a flat $ amount added per unit, default 0)
+ * so the drift-escalation path can be tested without live Amazon pricing;
+ * live mode isn't implemented yet — see FR-14/15, same as placeOrder.
+ * Returns undefined if there's no unit price to check against (matches
+ * expectedCharge's own undefined-when-no-unit_price behavior).
+ */
+function getCurrentPrice({ item, qty }) {
+  const mode = (process.env.AMAZON_MODE || 'mock').trim().toLowerCase();
+
+  if (mode === 'mock') {
+    if (item.unitPrice === undefined) return undefined;
+    const driftPerUnit = Number(process.env.MOCK_PRICE_DRIFT_PER_UNIT || 0) || 0;
+    return (item.unitPrice + driftPerUnit) * qty;
+  }
+
+  throw new Error('live price lookup not implemented — see FR-14');
+}
+
+/**
  * Place an order for one item. expectedCharge is threaded through onto the
  * result unvalidated for now — the real ExpectedCharge guard (comparing
  * against what Amazon actually charges) is live-only behavior, see FR-14.
@@ -37,4 +59,4 @@ async function placeOrder({ item, qty, expectedCharge, idempotencyKey }) {
   throw new Error('live ordering not implemented — see FR-14');
 }
 
-module.exports = { placeOrder, buildIdempotencyKey };
+module.exports = { placeOrder, buildIdempotencyKey, getCurrentPrice };

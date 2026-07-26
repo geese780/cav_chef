@@ -75,6 +75,79 @@ test('pendingStore.claim (FR-07 atomicity)', async t => {
   });
 });
 
+test('pendingStore FR-11 second-approval flow', async t => {
+  const store = createPendingStore(':memory:');
+  const draft = { draftId: 'd1', locationName: 'WeHo', items: [{ item: { asin: 'B1' }, qty: 1, expectedCharge: 10 }] };
+  const pricedItems = [{ item: { asin: 'B1' }, qty: 1, expectedCharge: 10, currentCharge: 70 }];
+
+  await t.test('flagForSecondApproval succeeds from pending and merges in the new fields', () => {
+    store.put('d1', draft);
+    const flagged = store.flagForSecondApproval('d1', {
+      firstApprover: 'A',
+      items: pricedItems,
+      expectedTotal: 10,
+      currentTotal: 70,
+      deltaTotal: 60
+    });
+    assert.equal(flagged.firstApprover, 'A');
+    assert.equal(flagged.deltaTotal, 60);
+    assert.deepEqual(flagged.items, pricedItems);
+  });
+
+  await t.test('flagForSecondApproval fails once already flagged (not pending anymore)', () => {
+    assert.equal(
+      store.flagForSecondApproval('d1', { firstApprover: 'A', items: pricedItems, expectedTotal: 10, currentTotal: 70, deltaTotal: 60 }),
+      undefined
+    );
+  });
+
+  await t.test('claimSecondApproval fails when the same user who flagged it tries to confirm', () => {
+    assert.equal(store.claimSecondApproval('d1', { secondApprover: 'A' }), undefined);
+  });
+
+  await t.test('get still shows the draft as open (not consumed by the failed same-user attempt)', () => {
+    assert.equal(store.get('d1').firstApprover, 'A');
+  });
+
+  await t.test('claimSecondApproval succeeds for a distinct approver', () => {
+    const claimed = store.claimSecondApproval('d1', { secondApprover: 'B' });
+    assert.equal(claimed.firstApprover, 'A');
+    assert.equal(claimed.deltaTotal, 60);
+  });
+
+  await t.test('a second claimSecondApproval attempt fails (already moved past awaiting_second_approval)', () => {
+    assert.equal(store.claimSecondApproval('d1', { secondApprover: 'C' }), undefined);
+  });
+
+  await t.test('claimForResolution can still resolve (e.g. deny) after second-approval claim consumed it into placing', () => {
+    // Already in 'placing' from the prior claimSecondApproval, so a further
+    // claimForResolution (deny) correctly finds nothing left to resolve.
+    assert.equal(store.claimForResolution('d1'), undefined);
+  });
+});
+
+test('pendingStore.claimForResolution denies a draft awaiting second approval', async t => {
+  const store = createPendingStore(':memory:');
+  const draft = { draftId: 'd2', locationName: 'WeHo', items: [{ item: { asin: 'B1' }, qty: 1, expectedCharge: 10 }] };
+  store.put('d2', draft);
+  store.flagForSecondApproval('d2', {
+    firstApprover: 'A',
+    items: draft.items,
+    expectedTotal: 10,
+    currentTotal: 70,
+    deltaTotal: 60
+  });
+
+  await t.test('claimForResolution succeeds from awaiting_second_approval (deny cancels it)', () => {
+    const resolved = store.claimForResolution('d2');
+    assert.equal(resolved.firstApprover, 'A');
+  });
+
+  await t.test('claimForResolution fails once already resolved', () => {
+    assert.equal(store.claimForResolution('d2'), undefined);
+  });
+});
+
 test('pendingStore migrates a pre-FR-07 DB file with no status column', async t => {
   const { DatabaseSync } = require('node:sqlite');
   const filePath = path.join(os.tmpdir(), `cav-chef-test-migrate-${Date.now()}.sqlite`);
