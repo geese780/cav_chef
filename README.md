@@ -50,6 +50,12 @@ so it's built from public docs and explicitly not to be trusted at face value.
 against a real order — see FR-14 in `FEATURE_REQUESTS.md` for exactly what's
 confirmed vs. inferred.
 
+The app's own logs are structured JSON (FR-18) — `LOG_LEVEL` (default `info`)
+controls Bolt's internal verbosity separately from that; a `GET /health`
+endpoint (FR-20, default port 8080, `PORT` to override) reports the last
+successful poll time, and `placeOrder`/poll failures post an alert to
+`APPROVAL_CHANNEL_ID` (FR-19) instead of only going to stdout.
+
 ## Setup
 
 1. Create a new Slack app at https://api.slack.com/apps/new → "From an app manifest"

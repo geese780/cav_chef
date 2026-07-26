@@ -14,13 +14,27 @@ const { pollCheckins, checkinLeadTimeHours, checkinRepingHours } = require('./ch
 const { isApprover, allowSelfSecondApproval } = require('./approvers');
 const { priceDriftThreshold, evaluateDraftTotal } = require('./budget');
 const auditLog = require('./auditLog');
+const appLogger = require('./logger');
+const { alertOnFailure } = require('./alerts');
+const { startHealthServer, recordPoll } = require('./health');
+
+/** Bolt's own internal logger (its HTTP/socket debug noise) is separate from
+ * our structured application logging (FR-18, see logger.js) — this only
+ * controls Bolt's verbosity. Defaults to 'info' (DEBUG is very noisy: full
+ * request/response bodies for every Slack API call); set LOG_LEVEL=debug to
+ * troubleshoot Bolt/Slack-level issues. */
+function boltLogLevel() {
+  const raw = (process.env.LOG_LEVEL || 'info').trim().toLowerCase();
+  const map = { debug: LogLevel.DEBUG, info: LogLevel.INFO, warn: LogLevel.WARN, error: LogLevel.ERROR };
+  return map[raw] || LogLevel.INFO;
+}
 
 /** CAV Slackbot — inventory reorder approvals (see FEATURE_REQUESTS.md). */
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
   socketMode: true,
   appToken: process.env.SLACK_APP_TOKEN,
-  logLevel: LogLevel.DEBUG,
+  logLevel: boltLogLevel(),
 });
 
 /** Approver allowlist (FR-10) — checked before claiming, so an unauthorized
@@ -38,13 +52,25 @@ async function rejectUnlessApprover({ client, channel, byUserId, action }) {
 
 /** Places orders for a claimed/second-approved draft's already price-checked
  * items and resolves the message. Shared by the immediate-approve and
- * second-approval-confirmed paths. */
-async function placeAndResolve({ client, logger, resolved, byUserId, firstApproverId, deltaTotal }) {
+ * second-approval-confirmed paths. Failed placeOrder calls are alerted
+ * (FR-19) and re-thrown — Bolt's own handler wraps this, so the message
+ * never silently updates to "approved" if an order actually failed. */
+async function placeAndResolve({ client, resolved, byUserId, firstApproverId, deltaTotal }) {
   const orderResults = [];
   for (const { item, qty, currentCharge } of resolved.items) {
     const idempotencyKey = buildIdempotencyKey(resolved.draftId, item.asin);
-    const { orderId } = await placeOrder({ item, qty, expectedCharge: currentCharge, idempotencyKey });
-    orderResults.push({ orderId });
+    try {
+      const { orderId } = await placeOrder({ item, qty, expectedCharge: currentCharge, idempotencyKey });
+      orderResults.push({ orderId });
+    } catch (err) {
+      await alertOnFailure(client, 'placeOrder failed', {
+        draftId: resolved.draftId,
+        locationName: resolved.locationName,
+        asin: item.asin,
+        error: err.message
+      });
+      throw err;
+    }
   }
 
   await client.chat.update({
@@ -82,7 +108,12 @@ async function placeAndResolve({ client, logger, resolved, byUserId, firstApprov
     }
   });
 
-  logger.info(`[${resolved.locationName}] Approved batch ${resolved.draftId} by ${byUserId} — ${orderResults.length} mock order(s)`);
+  appLogger.info('Approved batch', {
+    draftId: resolved.draftId,
+    locationName: resolved.locationName,
+    byUserId,
+    orderCount: orderResults.length
+  });
 }
 
 /** FR-11: price-drift guardrail — checks the current price against what was
@@ -90,7 +121,7 @@ async function placeAndResolve({ client, logger, resolved, byUserId, firstApprov
  * when the total increase hits PRICE_DRIFT_THRESHOLD (or can't be verified
  * at all), otherwise proceeds on the single click with a note if it crept
  * up but stayed under threshold. */
-app.action('approve_reorder', async ({ ack, action, body, client, logger }) => {
+app.action('approve_reorder', async ({ ack, action, body, client }) => {
   await ack();
 
   const byUserId = body.user.id;
@@ -143,10 +174,13 @@ app.action('approve_reorder', async ({ ack, action, body, client, logger }) => {
         hasUnknown: evaluation.hasUnknown
       })
     });
-    logger.info(
-      `[${draft.locationName}] Batch ${action.value} flagged for second approval by ${byUserId} ` +
-        `(delta ${evaluation.deltaTotal}, hasUnknown=${evaluation.hasUnknown})`
-    );
+    appLogger.info('Batch flagged for second approval', {
+      draftId: action.value,
+      locationName: draft.locationName,
+      byUserId,
+      deltaTotal: evaluation.deltaTotal,
+      hasUnknown: evaluation.hasUnknown
+    });
     return;
   }
 
@@ -158,7 +192,6 @@ app.action('approve_reorder', async ({ ack, action, body, client, logger }) => {
 
   await placeAndResolve({
     client,
-    logger,
     resolved: { ...claimed, items: pricedItems },
     byUserId,
     deltaTotal: evaluation.deltaTotal
@@ -170,7 +203,7 @@ app.action('approve_reorder', async ({ ack, action, body, client, logger }) => {
  * pendingStore.claimSecondApproval. ALLOW_SELF_SECOND_APPROVAL (small-team
  * override, see approvers.js) skips that check without touching the
  * underlying dual-control logic, so it's a one-line flip to re-enable later. */
-app.action('confirm_price_drift', async ({ ack, action, body, client, logger }) => {
+app.action('confirm_price_drift', async ({ ack, action, body, client }) => {
   await ack();
 
   const byUserId = body.user.id;
@@ -193,13 +226,13 @@ app.action('confirm_price_drift', async ({ ack, action, body, client, logger }) 
     return; // already resolved, or same-user attempt — no-op beyond the message above
   }
 
-  await placeAndResolve({ client, logger, resolved: claimed, byUserId, firstApproverId: claimed.firstApprover });
+  await placeAndResolve({ client, resolved: claimed, byUserId, firstApproverId: claimed.firstApprover });
 });
 
 // Denies from either 'pending' or 'awaiting_second_approval' (FR-11) —
 // canceling a high-drift order shouldn't require a second approver to show
 // up first.
-app.action('deny_reorder', async ({ ack, action, body, client, logger }) => {
+app.action('deny_reorder', async ({ ack, action, body, client }) => {
   await ack();
 
   const byUserId = body.user.id;
@@ -227,7 +260,7 @@ app.action('deny_reorder', async ({ ack, action, body, client, logger }) => {
     }
   });
 
-  logger.info(`[${draft.locationName}] Denied batch ${draft.draftId} by ${byUserId}`);
+  appLogger.info('Denied batch', { draftId: draft.draftId, locationName: draft.locationName, byUserId });
 });
 
 /** Pre-booking inventory check-in (FR-29) — Done/Confirmed only, no ordering
@@ -236,7 +269,7 @@ app.action('deny_reorder', async ({ ack, action, body, client, logger }) => {
  * click on a copy that isn't the one that resolved it still updates *that*
  * message to show the already-acknowledged state, rather than doing nothing —
  * otherwise a user clicking a stale re-ping gets no feedback at all. */
-app.action('confirm_checkin', async ({ ack, action, body, client, logger }) => {
+app.action('confirm_checkin', async ({ ack, action, body, client }) => {
   await ack();
 
   const byUserId = body.user.id;
@@ -256,15 +289,20 @@ app.action('confirm_checkin', async ({ ack, action, body, client, logger }) => {
   });
 
   if (claimed) {
-    logger.info(`[${record.locationName}] Check-in ${record.checkinId} confirmed by ${byUserId}`);
+    appLogger.info('Check-in confirmed', { checkinId: record.checkinId, locationName: record.locationName, byUserId });
   }
 });
 
 (async () => {
   try {
-    await validateStartupConfig({ client: app.client, logger: app.logger });
+    await validateStartupConfig({ client: app.client, logger: appLogger });
     await app.start();
-    app.logger.info('⚡️ CAV_Chef is running!');
+    appLogger.info('CAV_Chef is running');
+
+    // FR-20: health check HTTP server — required by Cloud Run (FR-23), which
+    // needs the container to bind to $PORT and respond, or it's considered
+    // unhealthy and killed. Also useful for any external uptime monitor.
+    startHealthServer();
 
     // Calendar-driven trigger (FR-28): poll every location on a fixed cadence
     // and run a cycle only for those whose next booking is within the lead
@@ -278,18 +316,32 @@ app.action('confirm_checkin', async ({ ack, action, body, client, logger }) => {
     const intervalMinutes = pollIntervalMinutes();
     const poll = () =>
       Promise.all([
-        pollDueLocations({ client: app.client, calendar, logger: app.logger }),
-        pollCheckins({ client: app.client, calendar, logger: app.logger })
-      ]).catch(err => app.logger.error('Calendar poll failed', err));
+        pollDueLocations({ client: app.client, calendar, logger: appLogger }),
+        pollCheckins({ client: app.client, calendar, logger: appLogger })
+      ])
+        .then(() => recordPoll())
+        .catch(async err => {
+          appLogger.error('Calendar poll failed', { error: err.message });
+          await alertOnFailure(app.client, 'Calendar poll failed', { error: err.message });
+        });
 
     await poll();
     setInterval(poll, intervalMinutes * 60 * 1000);
-    app.logger.info(
-      `Polling every ${intervalMinutes}min — reorder lead time ${leadTimeHours()}h, ` +
-        `check-in lead time ${checkinLeadTimeHours()}h (re-ping every ${checkinRepingHours()}h).`
-    );
+    appLogger.info('Polling for due locations', {
+      intervalMinutes,
+      reorderLeadTimeHours: leadTimeHours(),
+      checkinLeadTimeHours: checkinLeadTimeHours(),
+      checkinRepingHours: checkinRepingHours()
+    });
   } catch (error) {
-    app.logger.error('Failed to start the app', error);
+    appLogger.error('Failed to start the app', { error: error.message });
     process.exit(1);
   }
 })();
+
+// FR-19: catch anything Bolt's own handlers don't (a thrown error inside an
+// app.action callback surfaces here too), so a bug doesn't fail silently.
+process.on('unhandledRejection', async err => {
+  appLogger.error('Unhandled rejection', { error: err && err.message });
+  await alertOnFailure(app.client, 'Unhandled rejection', { error: err && err.message }).catch(() => {});
+});

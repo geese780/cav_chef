@@ -83,8 +83,9 @@ async function pollCheckins({ client, calendar, logger }) {
         ts: result.ts,
         now: now.getTime()
       });
-      const msg = `[${location.name}] Posted inventory check-in for booking on ${nextEventStart.toISOString()}.`;
-      log.info ? log.info(msg) : log.log(msg);
+      const msg = 'Posted inventory check-in';
+      const context = { checkinId, locationName: location.name, bookingStart: nextEventStart.toISOString() };
+      log.info ? log.info(msg, context) : log.log(msg, context);
       continue;
     }
 
@@ -95,8 +96,9 @@ async function pollCheckins({ client, calendar, logger }) {
         blocks: buildCheckinReminderBlocks({ checkinId, locationName: location.name, bookingStart: nextEventStart })
       });
       checkinStore.recordReping(checkinId, { channel, ts: result.ts, now: now.getTime() });
-      const msg = `[${location.name}] Re-pinged inventory check-in for booking on ${nextEventStart.toISOString()}.`;
-      log.info ? log.info(msg) : log.log(msg);
+      const msg = 'Re-pinged inventory check-in';
+      const context = { checkinId, locationName: location.name, bookingStart: nextEventStart.toISOString() };
+      log.info ? log.info(msg, context) : log.log(msg, context);
     }
   }
 }

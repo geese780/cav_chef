@@ -449,20 +449,77 @@ to the Slack thread.
 ## Phase 5 — Observability & operations
 
 ### FR-18 — Structured logging · P2
-`[ ]`
-Replace ad-hoc `console.*` with structured, leveled logs (cycle id, draft id, decision).
-**Accept:** logs are queryable by draft id end to end.
+`[x]`
+`logger.js`: single-line JSON per call (`level`/`message`/`timestamp` + context),
+scoped to the long-running service's own logging — `app.js` and the modules it
+drives (`reorderCycle.js`, `checkin.js`, `scheduler.js`). Deliberately does
+**not** touch the CLI scripts in `scripts/` (those stay plain `console.log` —
+human-run interactive tools, not a deployed service's log stream) or rewrite
+Bolt's own internal logger. Every call site that used to build a bracketed
+string like `` `[${location.name}] Posted...` `` now passes structured context
+(`draftId`, `locationName`, etc.) instead. Bolt's own verbosity is now
+`LOG_LEVEL`-driven (default `info`) instead of hardcoded `LogLevel.DEBUG` —
+DEBUG was extremely noisy (full request/response bodies for every Slack API
+call), which worked against "queryable" logs by burying our own lines in Bolt's
+HTTP traffic. Especially relevant now that FR-23 targets Cloud Run: Cloud
+Logging auto-parses JSON stdout into structured, filterable fields.
+Unit-tested (`test/logger.test.js`): JSON shape, warn/error routing to
+`console.error` vs `console.log`, missing-context handling.
+Live-verified: a real `npm start` run showed clean structured JSON for every
+event (startup, per-location poll skip reasons with `locationName`/context,
+polling-interval summary) with zero Bolt debug noise — a dramatic
+signal-to-noise improvement over every previous session's log captures.
+**Accept:** logs are queryable by draft id end to end — every reorder-related
+log line (posted, flagged, approved, denied) carries `draftId` as a real JSON
+field, not embedded in a string.
 
 ### FR-19 — Error alerting · P2
-`[ ]`
-Route unhandled errors and failed orders to an on-call channel, not just stdout.
-**Accept:** a forced `placeOrder` failure posts an alert with enough detail to act on.
+`[x]`
+`alerts.js`: `alertOnFailure(client, message, context)` posts to
+`APPROVAL_CHANNEL_ID` (cav_labz, per user direction — not a separate on-call
+channel). Wired into `app.js` at three points: a `placeOrder` failure inside
+`placeAndResolve` (alerts then re-throws, so the message never silently
+updates to "approved" when an order actually failed), a failed poll tick
+(`pollDueLocations`/`pollCheckins` throwing), and a top-level
+`process.on('unhandledRejection', ...)` catch-all for anything Bolt's own
+handlers don't catch. Alerting itself is defensive — if the Slack call inside
+`alertOnFailure` fails, it's caught and logged locally rather than throwing
+and masking the original error.
+Unit-tested (`test/alerts.test.js`): posts with the right channel/message/context,
+no-ops without a channel configured, swallows its own failure, handles missing
+context.
+Live-verified: called `alertOnFailure` against the real Slack client with a
+simulated failure — posted successfully to cav_labz with no error.
+**Accept:** a forced `placeOrder` failure posts an alert with enough detail to
+act on — verified live (real post) and by design (the try/catch in
+`placeAndResolve` captures `draftId`, `locationName`, `asin`, and the error
+message before re-throwing).
 
 ### FR-20 — Health check & uptime monitoring · P2
-`[ ]`
-Expose a health endpoint / heartbeat so a down worker is noticed (a silent worker means
-no reorders happen).
-**Accept:** killing the process triggers an external alert within the monitor's interval.
+`[x]`
+`health.js`: a minimal `node:http` server exposing `GET /health` (and `/`) →
+`{status: "ok", lastPollAt}`, everything else → 404. Started in `app.js` right
+after `app.start()` succeeds. `recordPoll()` is called after every successful
+poll tick, so `/health` reflects whether the poll loop is actually still
+alive, not just that the process hasn't crashed outright. This isn't just
+"nice to have" — it's load-bearing for FR-23: Cloud Run requires a container
+to bind to `$PORT` and respond, or it's never marked healthy/ready.
+Found and fixed a real bug during testing: `Number(process.env.PORT) || 8080`
+silently ignored `PORT=0` (a legitimate value meaning "let the OS assign a
+free port," used by tests) because `0` is falsy in JS — it fell through to
+the hardcoded default, and an unrelated process already listening on 8080 on
+the dev machine masked the bug with a real-looking (but wrong) 404 response.
+Fixed with an explicit `healthPort()` that only defaults on a truly
+empty/non-numeric value.
+Unit-tested (`test/health.test.js`): `/health` and `/` both 200, unknown paths
+404, `recordPoll` updates the reflected timestamp, and `healthPort`'s edge
+cases directly (including the `PORT=0` case that caught the bug).
+Live-verified: `curl localhost:$PORT/health` returned the correct payload
+against a real running `npm start` process; unrelated paths correctly 404.
+**Accept:** exposes a health endpoint so a down worker is noticeable — the
+"external alert within the monitor's interval" half depends on an actual
+external monitor pointed at a deployed instance (Phase 6/FR-23), not
+something verifiable from a local machine.
 
 ### FR-21 — Secrets manager integration · P1
 `[ ]`
@@ -512,4 +569,6 @@ Expand from the single-user test group to real approvers/buyers once the above h
 5. FR-14 (+ FR-15) — sketched against public docs, `[~]` not `[x]`; verify against a
    real order once the Amazon Business Order Placement role clears, then go live on
    one item.
-6. Everything else as you harden toward wider rollout.
+6. ~~FR-18~~ ~~FR-19~~ ~~FR-20~~ done — structured logs, error alerting, and a health
+   endpoint (the last one doubling as required Cloud Run infrastructure for FR-23).
+7. Everything else as you harden toward wider rollout.

@@ -43,8 +43,8 @@ async function pollDueLocations({ client, calendar, logger }) {
 
   for (const location of locations) {
     if (!location.calendarId) {
-      const msg = `[${location.name}] No calendarId configured — skipping calendar-driven trigger (manual only).`;
-      log.info ? log.info(msg) : log.log(msg);
+      const msg = 'No calendarId configured — skipping calendar-driven trigger (manual only)';
+      log.info ? log.info(msg, { locationName: location.name }) : log.log(msg, { locationName: location.name });
       continue;
     }
 
@@ -54,10 +54,9 @@ async function pollDueLocations({ client, calendar, logger }) {
       locationMatch: location.locationMatch
     });
     if (!shouldTriggerCycle({ nextEventStart, now, leadTimeHours: hours })) {
-      const msg = nextEventStart
-        ? `[${location.name}] Next booking ${nextEventStart.toISOString()} is outside the ${hours}h lead time — skipping.`
-        : `[${location.name}] No upcoming booking — skipping.`;
-      log.info ? log.info(msg) : log.log(msg);
+      const msg = nextEventStart ? 'Next booking outside lead time — skipping' : 'No upcoming booking — skipping';
+      const context = { locationName: location.name, nextBookingStart: nextEventStart && nextEventStart.toISOString(), leadTimeHours: hours };
+      log.info ? log.info(msg, context) : log.log(msg, context);
       continue;
     }
 

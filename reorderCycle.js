@@ -21,8 +21,8 @@ async function runReorderCycle({ client, logger, location }) {
 
   const alreadyPending = pendingStore.list().some(draft => draft.locationName === location.name);
   if (alreadyPending) {
-    const msg = `[${location.name}] A reorder batch is still pending approval — skipping this cycle.`;
-    log.info ? log.info(msg) : log.log(msg);
+    const msg = 'Reorder batch still pending approval — skipping this cycle';
+    log.info ? log.info(msg, { locationName: location.name }) : log.log(msg, { locationName: location.name });
     return [];
   }
 
@@ -30,8 +30,8 @@ async function runReorderCycle({ client, logger, location }) {
   const toReorder = itemsNeedingReorder(items);
 
   if (toReorder.length === 0) {
-    const msg = `[${location.name}] No items below threshold — no prompt posted.`;
-    log.info ? log.info(msg) : log.log(msg);
+    const msg = 'No items below threshold — no prompt posted';
+    log.info ? log.info(msg, { locationName: location.name }) : log.log(msg, { locationName: location.name });
     return [];
   }
 
@@ -67,8 +67,9 @@ async function runReorderCycle({ client, logger, location }) {
   });
 
   const posted = draftItems.map(({ item, qty }) => ({ draftId, item, qty }));
-  const msg = `[${location.name}] Posted 1 batch reorder prompt for ${posted.length} item(s).`;
-  log.info ? log.info(msg) : log.log(msg);
+  const msg = `Posted 1 batch reorder prompt for ${posted.length} item(s)`;
+  const context = { draftId, locationName: location.name, itemCount: posted.length };
+  log.info ? log.info(msg, context) : log.log(msg, context);
   return posted;
 }
 
