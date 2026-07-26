@@ -542,9 +542,24 @@ with `{ cause: err }` rather than suppressing the rule, since it's a
 legitimate debuggability improvement in the same spirit as FR-18.
 `.github/workflows/ci.yml`: runs on every PR into `main` and every push to
 `main` — checkout, Node 24, `npm ci`, `npm run lint`, `npm test`.
+**Live-verified, and it immediately caught a real bug**: the first real CI run
+on GitHub's Linux runner failed `npm test` even though everything passed
+locally on Windows. Root cause: `pendingStore.js`/`checkinStore.js`/
+`auditLog.js` all eagerly opened their shared default SQLite file the instant
+they were `require()`-d — even by tests that only ever use
+`createXStore(':memory:')`. `node --test` parallelizes across files, so
+multiple test processes on the CI runner were hitting that same physical file
+concurrently, tripping SQLite locking in a way Windows happened not to surface
+locally. Fixed by making the default store instance lazy (opened on first
+actual use by production code, not at require time) in all three modules;
+confirmed locally that a full `npm test` run no longer creates a `data/`
+directory at all. Pushed the fix and confirmed the next CI run passed for
+real. This is exactly the kind of cross-environment bug FR-22 exists to catch
+before it reaches production.
 **Accept:** a PR with failing tests is blocked — the workflow fails the run on
 either `npm run lint` or `npm test` failing, and either step failing fails the
-job.
+job. Verified both directions live: a real failure (above) blocked the run,
+and the fixed commit passed.
 
 ### FR-23 — Containerize & deploy · P1
 `[ ]`
