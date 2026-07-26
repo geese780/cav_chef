@@ -9,7 +9,8 @@
     "check-inventory-list": "node scripts/check-inventory-list.js",
     "check-calendar": "node scripts/check-calendar.js",
     "run-reorder-cycle": "node scripts/run-reorder-cycle.js",
-    "run-checkin-poll": "node scripts/run-checkin-poll.js"
+    "run-checkin-poll": "node scripts/run-checkin-poll.js",
+    "audit-log": "node scripts/audit-log.js"
   },
   "license": "UNLICENSED",
   "dependencies": {

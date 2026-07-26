@@ -12,7 +12,8 @@ than either of those bots. Own manifest, own tokens, own process.
 
 ## Status
 
-Phase 1 (correctness) and Phase 1.5 (scheduling & multi-location) are both done.
+Phase 1 (correctness), Phase 1.5 (scheduling & multi-location), Phase 2
+(reliability), and Phase 3 (spend safety & governance) are all done.
 Config/column validation on boot (FR-01), unit tests for the threshold logic
 (FR-03), and cross-cycle de-dup so a still-low item doesn't get re-prompted every
 cycle (FR-02). Multi-location support (FR-27): each location has its own
@@ -34,13 +35,19 @@ was expected when a draft was posted: no meaningful change proceeds normally,
 a small increase proceeds with a note, and a $50+ increase — or a price that
 can't be verified at all, which is the current reality since no List has
 `unit_price` filled in yet — blocks placing and requires a second, distinct
-approver via a "Confirm at new price" button; Deny still works without one.
+approver via a "Confirm at new price" button (or the same approver, with
+`ALLOW_SELF_SECOND_APPROVAL=true`, a small-team override — see FR-11 below);
+Deny still works without one. Every prompt, decision, and order result is
+durably logged (FR-13) — `npm run audit-log [draftId]` retrieves who decided,
+when, the items, expected vs. actual charge, and the resulting order id.
 Still to do, notably:
 
 - **No live Amazon integration** — `placeOrder` always mocks (FR-14).
 
-Do not point this at a real spend-capable Amazon account until at least Phase 3
-(spend safety & governance) of the roadmap is done.
+Phase 3 (spend safety & governance) is done, but that alone isn't a green light
+to flip `AMAZON_MODE=live` — FR-14 (the live order request itself) still needs
+implementing and verifying against Amazon's real API once the Amazon Business
+Order Placement role is provisioned.
 
 ## Setup
 
@@ -220,3 +227,24 @@ approvers to go back to requiring a different person.
 There's no live Amazon price feed yet (see FR-14), so mock mode can't
 naturally produce drift — set `MOCK_PRICE_DRIFT_PER_UNIT` (a flat $ amount
 added to every unit's price) to simulate it for testing.
+
+### Audit log (FR-13)
+
+Every reorder prompt posted, decision made (flagged for second approval,
+approved, denied), and order placed is written to a durable, append-only log —
+separate from the pending-draft store, so the history survives even after a
+draft is resolved and removed from it.
+
+```sh
+npm run audit-log
+```
+
+Prints the 50 most recent entries across all locations.
+
+```sh
+npm run audit-log <draftId>
+```
+
+Prints the full timeline for one draft — e.g. `posted` → `flagged_second_approval`
+→ `approved` — showing who decided, when, the items, expected vs. actual charge
+per item, and the resulting order id.

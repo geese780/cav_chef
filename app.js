@@ -13,6 +13,7 @@ const { pollDueLocations, leadTimeHours, pollIntervalMinutes } = require('./sche
 const { pollCheckins, checkinLeadTimeHours, checkinRepingHours } = require('./checkin');
 const { isApprover, allowSelfSecondApproval } = require('./approvers');
 const { priceDriftThreshold, evaluateDraftTotal } = require('./budget');
+const auditLog = require('./auditLog');
 
 /** CAV Slackbot — inventory reorder approvals (see FEATURE_REQUESTS.md). */
 const app = new App({
@@ -62,6 +63,25 @@ async function placeAndResolve({ client, logger, resolved, byUserId, firstApprov
   });
 
   pendingStore.remove(resolved.draftId);
+
+  auditLog.log('approved', {
+    draftId: resolved.draftId,
+    locationName: resolved.locationName,
+    data: {
+      byUserId,
+      firstApproverId,
+      deltaTotal,
+      items: resolved.items.map(({ item, qty, expectedCharge, currentCharge }, i) => ({
+        asin: item.asin,
+        name: item.name,
+        qty,
+        expectedCharge,
+        actualCharge: currentCharge,
+        orderId: orderResults[i] && orderResults[i].orderId
+      }))
+    }
+  });
+
   logger.info(`[${resolved.locationName}] Approved batch ${resolved.draftId} by ${byUserId} — ${orderResults.length} mock order(s)`);
 }
 
@@ -95,6 +115,18 @@ app.action('approve_reorder', async ({ ack, action, body, client, logger }) => {
       deltaTotal: evaluation.deltaTotal
     });
     if (!flagged) return; // lost the race (already resolved elsewhere) — no-op
+
+    auditLog.log('flagged_second_approval', {
+      draftId: action.value,
+      locationName: draft.locationName,
+      data: {
+        byUserId,
+        expectedTotal: evaluation.expectedTotal,
+        currentTotal: evaluation.currentTotal,
+        deltaTotal: evaluation.deltaTotal,
+        hasUnknown: evaluation.hasUnknown
+      }
+    });
 
     await client.chat.update({
       channel: draft.channel,
@@ -185,6 +217,16 @@ app.action('deny_reorder', async ({ ack, action, body, client, logger }) => {
   });
 
   pendingStore.remove(action.value);
+
+  auditLog.log('denied', {
+    draftId: draft.draftId,
+    locationName: draft.locationName,
+    data: {
+      byUserId,
+      items: draft.items.map(({ item, qty }) => ({ asin: item.asin, name: item.name, qty }))
+    }
+  });
+
   logger.info(`[${draft.locationName}] Denied batch ${draft.draftId} by ${byUserId}`);
 });
 

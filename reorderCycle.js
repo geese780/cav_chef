@@ -12,6 +12,7 @@ const { getInventoryItems, itemsNeedingReorder } = require('./inventoryList');
 const { buildReorderBlocks } = require('./blockKit');
 const pendingStore = require('./pendingStore');
 const { parseLocations } = require('./locations');
+const auditLog = require('./auditLog');
 
 async function runReorderCycle({ client, logger, location }) {
   const log = logger || console;
@@ -48,6 +49,22 @@ async function runReorderCycle({ client, logger, location }) {
   });
 
   pendingStore.put(draftId, { draftId, locationName: location.name, items: draftItems, channel, ts: result.ts });
+
+  auditLog.log('posted', {
+    draftId,
+    locationName: location.name,
+    data: {
+      items: draftItems.map(({ item, qty, expectedCharge }) => ({
+        asin: item.asin,
+        name: item.name,
+        qty,
+        expectedCharge
+      })),
+      expectedTotal: draftItems.every(di => di.expectedCharge !== undefined)
+        ? draftItems.reduce((sum, di) => sum + di.expectedCharge, 0)
+        : undefined
+    }
+  });
 
   const posted = draftItems.map(({ item, qty }) => ({ draftId, item, qty }));
   const msg = `[${location.name}] Posted 1 batch reorder prompt for ${posted.length} item(s).`;

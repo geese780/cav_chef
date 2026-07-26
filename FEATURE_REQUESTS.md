@@ -255,7 +255,11 @@ any drafts left in a "placing" state.
 ---
 
 ## Phase 3 — Spend safety & governance
-*Do all of these before flipping `AMAZON_MODE=live`. This system spends real money.*
+*Do all of these before flipping `AMAZON_MODE=live`. This system spends real money.
+All three done — approver allowlist, price-drift guardrail, and audit log are
+all live. Still worth revisiting `ALLOW_SELF_SECOND_APPROVAL` (FR-11) once the
+team is bigger than 3 people, and filling in `unit_price` on the Lists so the
+drift check has real data instead of always treating price as unverifiable.*
 
 ### FR-10 — Approver authorization allowlist · P0
 `[x]`
@@ -353,10 +357,35 @@ approved days later at a drifted price. Update the message to "expired."
 **Accept:** approving after the window is refused; the message shows expired state.
 
 ### FR-13 — Audit log of decisions & orders · P1
-`[ ]`
-Persist every trigger, prompt, decision (who/when), and order result to durable storage.
+`[x]`
+`auditLog.js`: a new, append-only `audit_log` SQLite table (same file as
+`pendingStore`/`checkinStore`) — deliberately separate from `pendingStore`'s
+mutable `drafts` table, since those rows get deleted once resolved and would
+lose history. `log(eventType, {draftId, locationName, at, data})` records four
+event types: `posted` (reorderCycle.js, on every prompt — items + expected
+total), `flagged_second_approval` (app.js, FR-11's first-approve-on-drift
+click — who, expected/current/delta totals), `approved` (app.js's shared
+`placeAndResolve`, covers both the direct and second-approval paths — who
+decided, who flagged it if different, per-item expected charge / actual
+charge / order id), and `denied` (who, items). `forDraft(draftId)` returns
+the full chronological timeline for one draft; `recent(limit)` lists across
+all locations. `scripts/audit-log.js` (`npm run audit-log [draftId]`) is the
+retrieval interface — no draftId prints the 50 most recent entries, a draftId
+prints that draft's full timeline, human-readable.
+Scoped to reorder decisions/orders only, per the accept criteria — FR-29's
+check-in acknowledgments aren't logged here (different subsystem, not a spend
+decision).
+Unit-tested (`test/auditLog.test.js`): CRUD, chronological ordering, per-draft
+filtering, the `recent` window and its limit.
+Live-verified against the real workspace end to end: posted a real Rock
+Lititz batch, flagged it for second approval, approved it (self-second-approval
+via FR-11's override) — `npm run audit-log <draftId>` then correctly showed
+all three events in order with the real user id, the real mock order ids, and
+correct expected/actual charges (both `(unknown)`, accurately reflecting that
+this List has no `unit_price` yet); `npm run audit-log` with no argument
+correctly listed recent activity across all three locations.
 **Accept:** for any placed or denied order you can retrieve who decided, when, the items,
-the expected vs actual total, and the resulting order id.
+the expected vs actual total, and the resulting order id — verified live, above.
 
 ---
 
@@ -454,6 +483,6 @@ Expand from the single-user test group to real approvers/buyers once the above h
 2. ~~FR-27~~ ~~FR-28~~ ~~FR-29~~ done — multi-location, calendar-driven reorder trigger, and
    pre-booking check-in notification all live.
 3. ~~FR-06~~ ~~FR-07~~ done — Phase 2's reliability floor (state + idempotency) is complete.
-4. ~~FR-10~~ ~~FR-11~~ done. FR-13 — spend safety (per-location), before any live consideration.
+4. ~~FR-10~~ ~~FR-11~~ ~~FR-13~~ done — Phase 3 (spend safety & governance) is complete.
 5. FR-14 (+ FR-15) — go live on one item once the role clears.
 6. Everything else as you harden toward wider rollout.
