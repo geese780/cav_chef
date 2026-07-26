@@ -22,9 +22,10 @@ with a `calendarId` configured auto-runs its cycle once its next booking is
 within the lead time, instead of a flat schedule; a location without one just
 runs on manual trigger. Pending drafts persist across restarts in SQLite
 (`data/cav_chef.sqlite`, FR-06) — an in-flight approval survives a crash or
-redeploy. Still to do, notably:
+redeploy. Approving/denying atomically claims the draft first (FR-07), so a
+double-click or redelivered event can't place duplicate orders. Still to do,
+notably:
 
-- **No idempotency guard** — a double-click could double-order (FR-07).
 - **No approver allowlist** — anyone who can click Approve/Deny can (FR-10).
 - **No budget guardrails** — there is no spend cap yet (FR-11).
 - **No live Amazon integration** — `placeOrder` always mocks (FR-14).

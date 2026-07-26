@@ -39,6 +39,67 @@ test('pendingStore CRUD (in-memory)', async t => {
   });
 });
 
+test('pendingStore.claim (FR-07 atomicity)', async t => {
+  const store = createPendingStore(':memory:');
+  const draft = { draftId: 'd1', locationName: 'WeHo', items: [{ item: { asin: 'B1' }, qty: 1 }] };
+  store.put('d1', draft);
+
+  await t.test('a first claim succeeds and returns the draft', () => {
+    assert.deepEqual(store.claim('d1'), draft);
+  });
+
+  await t.test('a second claim on the same draftId fails (already claimed)', () => {
+    assert.equal(store.claim('d1'), undefined);
+  });
+
+  await t.test('claiming an unknown draftId returns undefined', () => {
+    assert.equal(store.claim('missing'), undefined);
+  });
+
+  await t.test('get still returns a claimed (not yet removed) draft', () => {
+    assert.deepEqual(store.get('d1'), draft);
+  });
+
+  await t.test('list still includes a claimed draft (still blocks FR-02 dedup)', () => {
+    assert.ok(store.list().some(d => d.draftId === 'd1'));
+  });
+
+  await t.test('re-putting a claimed draftId resets it to pending, claimable again', () => {
+    store.put('d1', draft);
+    assert.deepEqual(store.claim('d1'), draft);
+  });
+
+  await t.test('after remove, the draft can no longer be claimed', () => {
+    store.remove('d1');
+    assert.equal(store.claim('d1'), undefined);
+  });
+});
+
+test('pendingStore migrates a pre-FR-07 DB file with no status column', async t => {
+  const { DatabaseSync } = require('node:sqlite');
+  const filePath = path.join(os.tmpdir(), `cav-chef-test-migrate-${Date.now()}.sqlite`);
+  let store;
+  t.after(() => {
+    if (store) store.close();
+    fs.rmSync(filePath, { force: true });
+  });
+
+  // Simulate a DB file created before the status column existed.
+  const legacy = new DatabaseSync(filePath);
+  legacy.exec('CREATE TABLE drafts (draft_id TEXT PRIMARY KEY, data TEXT NOT NULL)');
+  legacy.prepare('INSERT INTO drafts (draft_id, data) VALUES (?, ?)').run(
+    'old',
+    JSON.stringify({ draftId: 'old', locationName: 'WeHo', items: [] })
+  );
+  legacy.close();
+
+  store = createPendingStore(filePath);
+  assert.deepEqual(store.get('old'), { draftId: 'old', locationName: 'WeHo', items: [] });
+  // A row inserted before the migration has no explicit status, but the
+  // column's DEFAULT 'pending' (added via ALTER TABLE) still applies to it.
+  assert.deepEqual(store.claim('old'), { draftId: 'old', locationName: 'WeHo', items: [] });
+});
+
 test('pendingStore persistence across a restart', async t => {
   const filePath = path.join(os.tmpdir(), `cav-chef-test-${Date.now()}.sqlite`);
   let after;

@@ -4,6 +4,11 @@
  * restart mid-approval doesn't strand a draft. put/get/remove/list keep the
  * same interface reorderCycle.js and app.js already use. No cross-cycle
  * de-dup here — see FR-02.
+ *
+ * `claim` (FR-07) atomically transitions a draft from 'pending' to 'placing'
+ * via a single conditional UPDATE, so two concurrent action handlers for the
+ * same draftId (double-click, redelivered Slack event) can't both proceed —
+ * only one UPDATE affects a row; the other sees 0 rows changed and no-ops.
  */
 
 const { DatabaseSync } = require('node:sqlite');
@@ -22,13 +27,34 @@ function createPendingStore(filePath) {
   }
 
   const db = new DatabaseSync(filePath);
-  db.exec('CREATE TABLE IF NOT EXISTS drafts (draft_id TEXT PRIMARY KEY, data TEXT NOT NULL)');
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS drafts (draft_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'pending', data TEXT NOT NULL)"
+  );
+  // Migrate a pre-FR-07 DB file that predates the status column.
+  const columns = db.prepare('PRAGMA table_info(drafts)').all();
+  if (!columns.some(c => c.name === 'status')) {
+    db.exec("ALTER TABLE drafts ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'");
+  }
 
   return {
     put(draftId, draft) {
-      db.prepare('INSERT OR REPLACE INTO drafts (draft_id, data) VALUES (?, ?)').run(draftId, JSON.stringify(draft));
+      db.prepare("INSERT OR REPLACE INTO drafts (draft_id, status, data) VALUES (?, 'pending', ?)").run(
+        draftId,
+        JSON.stringify(draft)
+      );
     },
     get(draftId) {
+      const row = db.prepare('SELECT data FROM drafts WHERE draft_id = ?').get(draftId);
+      return row ? JSON.parse(row.data) : undefined;
+    },
+    /** Atomically claims a pending draft for processing. Returns the draft on
+     * success, or undefined if it's missing or already claimed/resolved. */
+    claim(draftId) {
+      const result = db
+        .prepare("UPDATE drafts SET status = 'placing' WHERE draft_id = ? AND status = 'pending'")
+        .run(draftId);
+      if (Number(result.changes) === 0) return undefined;
+
       const row = db.prepare('SELECT data FROM drafts WHERE draft_id = ?').get(draftId);
       return row ? JSON.parse(row.data) : undefined;
     },
@@ -49,6 +75,7 @@ const defaultStore = createPendingStore(resolveDbPath());
 module.exports = {
   put: defaultStore.put,
   get: defaultStore.get,
+  claim: defaultStore.claim,
   remove: defaultStore.remove,
   list: defaultStore.list,
   createPendingStore,

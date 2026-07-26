@@ -4,7 +4,7 @@ const { config } = require('dotenv');
 config();
 
 const pendingStore = require('./pendingStore');
-const { placeOrder } = require('./orderingClient');
+const { placeOrder, buildIdempotencyKey } = require('./orderingClient');
 const { buildResolvedBlocks } = require('./blockKit');
 const { validateStartupConfig } = require('./startupCheck');
 const { buildCalendarClient } = require('./googleCalendar');
@@ -22,13 +22,17 @@ const app = new App({
 app.action('approve_reorder', async ({ ack, action, body, client, logger }) => {
   await ack();
 
-  const draft = pendingStore.get(action.value);
-  if (!draft) return; // already resolved or expired — no-op
+  // Atomic claim (FR-07): guards against two concurrent approve_reorder
+  // events for the same draft (double-click, redelivered event) both
+  // placing orders — only one claim can succeed.
+  const draft = pendingStore.claim(action.value);
+  if (!draft) return; // already resolved, already claimed, or expired — no-op
 
   const byUserId = body.user.id;
   const orderResults = [];
   for (const { item, qty, expectedCharge } of draft.items) {
-    const { orderId } = await placeOrder({ item, qty, expectedCharge });
+    const idempotencyKey = buildIdempotencyKey(draft.draftId, item.asin);
+    const { orderId } = await placeOrder({ item, qty, expectedCharge, idempotencyKey });
     orderResults.push({ orderId });
   }
 
@@ -46,8 +50,8 @@ app.action('approve_reorder', async ({ ack, action, body, client, logger }) => {
 app.action('deny_reorder', async ({ ack, action, body, client, logger }) => {
   await ack();
 
-  const draft = pendingStore.get(action.value);
-  if (!draft) return; // already resolved or expired — no-op
+  const draft = pendingStore.claim(action.value);
+  if (!draft) return; // already resolved, already claimed, or expired — no-op
 
   const byUserId = body.user.id;
 

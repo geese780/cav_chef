@@ -156,11 +156,35 @@ under the old in-memory store; now fixed.
 resolve — verified live, above.
 
 ### FR-07 — Idempotent order placement · P0
-`[ ]`
-Guard against double-submission (double-clicked button, retried handler, redelivered
-event). Mark a draft as "placing/placed" atomically before calling `placeOrder`, and
-pass a client-side idempotency/reference key on the live request.
-**Accept:** two rapid Approve clicks on one prompt place exactly one order.
+`[x]`
+`pendingStore.claim(draftId)` atomically transitions a draft `'pending' →
+'placing'` via one conditional `UPDATE ... WHERE status = 'pending'` — SQLite
+guarantees the statement itself is atomic, and since it's synchronous
+(`node:sqlite`) there's no `await` gap where a second concurrent handler could
+interleave before the first claims it. Both `approve_reorder` and
+`deny_reorder` in `app.js` now call `claim` instead of `get`; a failed claim
+(already claimed/resolved/missing) is a silent no-op, same as the old
+missing-draft case. `orderingClient.buildIdempotencyKey(draftId, asin)`
+produces a stable per-item reference key threaded through `placeOrder` — ready
+for FR-14 to pass as Amazon's client reference token so a network-level retry
+can't double-place there either.
+Also fixed in passing: `pendingStore.js`'s `CREATE TABLE IF NOT EXISTS` doesn't
+alter an existing table, so a pre-FR-07 SQLite file (from FR-06 testing this
+same session) was missing the new `status` column — added a migration
+(`PRAGMA table_info` check + `ALTER TABLE ADD COLUMN` if missing) and a test
+covering it.
+Unit-tested (`test/pendingStore.test.js`): a second `claim` on an already-claimed
+draft returns `undefined`; claiming resets on re-`put`; a claimed-but-not-removed
+draft still counts for FR-02 dedup; the legacy-DB migration path.
+Live-verified: a normal single Approve resolves correctly with proper
+idempotency keys logged (`draftId:asin`). A literal rapid double-click couldn't
+be produced through the Slack UI itself — Slack disables the button client-side
+after the first click — so the "two rapid clicks" scenario is proven at the
+level that actually matters: the atomic claim only ever succeeds once, verified
+directly by the unit tests above rather than a manual UI race.
+**Accept:** two rapid Approve clicks on one prompt place exactly one order —
+proven via `claim`'s atomicity (unit-tested) since Slack's own UI prevents
+manually reproducing literal concurrent clicks.
 
 ### FR-08 — Retry, backoff & rate-limit handling · P2
 `[ ]`
@@ -299,7 +323,7 @@ Expand from the single-user test group to real approvers/buyers once the above h
 
 1. ~~FR-02~~ ~~FR-03~~ ~~FR-01~~ done — correctness locked in while still in mock mode.
 2. ~~FR-27~~ ~~FR-28~~ done — Phase 1.5 complete, multi-location + calendar trigger both live.
-3. ~~FR-06~~ done. FR-07 — idempotency, the last piece of the reliability floor.
+3. ~~FR-06~~ ~~FR-07~~ done — Phase 2's reliability floor (state + idempotency) is complete.
 4. FR-10, FR-11, FR-13 — spend safety (per-location), before any live consideration.
 5. FR-14 (+ FR-15) — go live on one item once the role clears.
 6. Everything else as you harden toward wider rollout.
