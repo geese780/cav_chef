@@ -130,17 +130,28 @@ function createPendingStore(filePath) {
   };
 }
 
-const defaultStore = createPendingStore(resolveDbPath());
+// Lazy — merely require()-ing this module must not touch disk. Tests only
+// ever use createPendingStore(':memory:') directly, but every test file that
+// requires this module (even indirectly) used to eagerly open the shared
+// default DB file at load time; with node --test parallelizing across files,
+// that caused real SQLITE_BUSY contention in CI (Linux) that Windows dev
+// happened not to surface. Now the default store only opens on first actual
+// use by production code (app.js et al).
+let defaultStore;
+function getDefaultStore() {
+  if (!defaultStore) defaultStore = createPendingStore(resolveDbPath());
+  return defaultStore;
+}
 
 module.exports = {
-  put: defaultStore.put,
-  get: defaultStore.get,
-  claim: defaultStore.claim,
-  claimForResolution: defaultStore.claimForResolution,
-  flagForSecondApproval: defaultStore.flagForSecondApproval,
-  claimSecondApproval: defaultStore.claimSecondApproval,
-  remove: defaultStore.remove,
-  list: defaultStore.list,
+  put: (...args) => getDefaultStore().put(...args),
+  get: (...args) => getDefaultStore().get(...args),
+  claim: (...args) => getDefaultStore().claim(...args),
+  claimForResolution: (...args) => getDefaultStore().claimForResolution(...args),
+  flagForSecondApproval: (...args) => getDefaultStore().flagForSecondApproval(...args),
+  claimSecondApproval: (...args) => getDefaultStore().claimSecondApproval(...args),
+  remove: (...args) => getDefaultStore().remove(...args),
+  list: (...args) => getDefaultStore().list(...args),
   createPendingStore,
   resolveDbPath,
   DEFAULT_DB_PATH

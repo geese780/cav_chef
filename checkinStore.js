@@ -95,13 +95,20 @@ function createCheckinStore(filePath) {
   };
 }
 
-const defaultStore = createCheckinStore(resolveDbPath());
+// Lazy — see the matching comment in pendingStore.js: merely require()-ing
+// this module must not touch disk, or parallel test files hitting the same
+// default DB file cause real SQLITE_BUSY contention in CI.
+let defaultStore;
+function getDefaultStore() {
+  if (!defaultStore) defaultStore = createCheckinStore(resolveDbPath());
+  return defaultStore;
+}
 
 module.exports = {
-  get: defaultStore.get,
-  create: defaultStore.create,
-  recordReping: defaultStore.recordReping,
-  claim: defaultStore.claim,
+  get: (...args) => getDefaultStore().get(...args),
+  create: (...args) => getDefaultStore().create(...args),
+  recordReping: (...args) => getDefaultStore().recordReping(...args),
+  claim: (...args) => getDefaultStore().claim(...args),
   createCheckinStore,
   buildCheckinId,
   resolveDbPath,

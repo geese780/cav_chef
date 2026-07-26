@@ -71,12 +71,19 @@ function createAuditLog(filePath) {
   };
 }
 
-const defaultLog = createAuditLog(resolveDbPath());
+// Lazy — see the matching comment in pendingStore.js: merely require()-ing
+// this module must not touch disk, or parallel test files hitting the same
+// default DB file cause real SQLITE_BUSY contention in CI.
+let defaultLog;
+function getDefaultLog() {
+  if (!defaultLog) defaultLog = createAuditLog(resolveDbPath());
+  return defaultLog;
+}
 
 module.exports = {
-  log: defaultLog.log,
-  forDraft: defaultLog.forDraft,
-  recent: defaultLog.recent,
+  log: (...args) => getDefaultLog().log(...args),
+  forDraft: (...args) => getDefaultLog().forDraft(...args),
+  recent: (...args) => getDefaultLog().recent(...args),
   createAuditLog,
   resolveDbPath,
   DEFAULT_DB_PATH
