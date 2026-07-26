@@ -137,10 +137,23 @@ configured lead time before it (verified live, above); a manual trigger
 ## Phase 2 — Reliability & state
 
 ### FR-06 — Persistent pending-draft store · P1
-`[ ]`
-Replace the in-memory `Map` in `pendingStore.js` with SQLite or Redis behind the same
-`put/get/remove` interface, so a restart mid-approval doesn't strand a draft.
-**Accept:** a pending prompt survives a process restart and its buttons still resolve.
+`[x]`
+Replaced the in-memory `Map` in `pendingStore.js` with SQLite via `node:sqlite`
+(built into Node 22+, no new dependency) — same `put/get/remove/list` interface,
+so `reorderCycle.js` and `app.js` needed no changes. DB file defaults to
+`data/cav_chef.sqlite` (gitignored), overridable via `PENDING_STORE_DB_PATH`. A
+`createPendingStore(filePath)` factory (plus `:memory:` support) makes it
+testable in isolation. Unit-tested (`test/pendingStore.test.js`) including a
+literal "restart" case — a fresh store instance reopening the same file sees
+prior drafts.
+Verified live: posted a batch prompt, killed the `npm start` process entirely
+(not just the shell, the actual `node.exe`), started a brand-new process (fresh
+Socket Mode connection, no shared memory with the old one), then clicked Approve
+on the pre-restart prompt — it resolved correctly, placing all 3 mock orders.
+This is the exact failure mode hit earlier this session with orphaned processes
+under the old in-memory store; now fixed.
+**Accept:** a pending prompt survives a process restart and its buttons still
+resolve — verified live, above.
 
 ### FR-07 — Idempotent order placement · P0
 `[ ]`
@@ -286,7 +299,7 @@ Expand from the single-user test group to real approvers/buyers once the above h
 
 1. ~~FR-02~~ ~~FR-03~~ ~~FR-01~~ done — correctness locked in while still in mock mode.
 2. ~~FR-27~~ ~~FR-28~~ done — Phase 1.5 complete, multi-location + calendar trigger both live.
-3. FR-06, FR-07 — state + idempotency, the reliability floor.
+3. ~~FR-06~~ done. FR-07 — idempotency, the last piece of the reliability floor.
 4. FR-10, FR-11, FR-13 — spend safety (per-location), before any live consideration.
 5. FR-14 (+ FR-15) — go live on one item once the role clears.
 6. Everything else as you harden toward wider rollout.
