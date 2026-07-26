@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { assertRequiredEnvVars } = require('../startupCheck');
 
-const REQUIRED = ['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'LOCATIONS_JSON', 'APPROVAL_CHANNEL_ID'];
+const REQUIRED = ['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'LOCATIONS_JSON', 'APPROVAL_CHANNEL_ID', 'APPROVER_ALLOWLIST'];
 
 function withEnv(overrides, fn) {
   const saved = {};

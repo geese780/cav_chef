@@ -11,6 +11,7 @@ const { validateStartupConfig } = require('./startupCheck');
 const { buildCalendarClient } = require('./googleCalendar');
 const { pollDueLocations, leadTimeHours, pollIntervalMinutes } = require('./scheduler');
 const { pollCheckins, checkinLeadTimeHours, checkinRepingHours } = require('./checkin');
+const { isApprover } = require('./approvers');
 
 /** CAV Slackbot — inventory reorder approvals (see FEATURE_REQUESTS.md). */
 const app = new App({
@@ -20,9 +21,25 @@ const app = new App({
   logLevel: LogLevel.DEBUG,
 });
 
-/** No authorization check yet — anyone who can click approves. See FR-10. */
+/** Approver allowlist (FR-10) — checked before claiming, so an unauthorized
+ * click doesn't consume the draft; it stays open for a real approver. */
+async function rejectUnlessApprover({ client, channel, byUserId, action }) {
+  if (isApprover(byUserId)) return false;
+
+  await client.chat.postEphemeral({
+    channel,
+    user: byUserId,
+    text: `🚫 You're not authorized to ${action} reorders. Ask an admin to add you to APPROVER_ALLOWLIST.`
+  });
+  return true;
+}
+
 app.action('approve_reorder', async ({ ack, action, body, client, logger }) => {
   await ack();
+
+  const byUserId = body.user.id;
+  const rejected = await rejectUnlessApprover({ client, channel: body.channel.id, byUserId, action: 'approve' });
+  if (rejected) return;
 
   // Atomic claim (FR-07): guards against two concurrent approve_reorder
   // events for the same draft (double-click, redelivered event) both
@@ -30,7 +47,6 @@ app.action('approve_reorder', async ({ ack, action, body, client, logger }) => {
   const draft = pendingStore.claim(action.value);
   if (!draft) return; // already resolved, already claimed, or expired — no-op
 
-  const byUserId = body.user.id;
   const orderResults = [];
   for (const { item, qty, expectedCharge } of draft.items) {
     const idempotencyKey = buildIdempotencyKey(draft.draftId, item.asin);
@@ -52,10 +68,12 @@ app.action('approve_reorder', async ({ ack, action, body, client, logger }) => {
 app.action('deny_reorder', async ({ ack, action, body, client, logger }) => {
   await ack();
 
+  const byUserId = body.user.id;
+  const rejected = await rejectUnlessApprover({ client, channel: body.channel.id, byUserId, action: 'deny' });
+  if (rejected) return;
+
   const draft = pendingStore.claim(action.value);
   if (!draft) return; // already resolved, already claimed, or expired — no-op
-
-  const byUserId = body.user.id;
 
   await client.chat.update({
     channel: draft.channel,

@@ -27,9 +27,10 @@ double-click or redelivered event can't place duplicate orders. A separate
 pre-booking inventory check-in notification (FR-29) posts 216h before a
 location's next booking with current stock levels and a Done button, re-pinging
 every 24h until acknowledged — independent of the 48h auto-reorder trigger.
-Still to do, notably:
+Approve/Deny are restricted to an allowlist of Slack user ids (FR-10) — anyone
+else clicking gets a private "not authorized" message and the prompt stays
+open. Still to do, notably:
 
-- **No approver allowlist** — anyone who can click Approve/Deny can (FR-10).
 - **No budget guardrails** — there is no spend cap yet (FR-11).
 - **No live Amazon integration** — `placeOrder` always mocks (FR-14).
 
@@ -65,6 +66,11 @@ Do not point this at a real spend-capable Amazon account until at least Phase 3
 7. Pick (or create) one shared channel for reorder prompts across all locations,
    invite the bot to it (`/invite @CAV_Chef`), and put its channel ID in
    `APPROVAL_CHANNEL_ID`.
+8. Set `APPROVER_ALLOWLIST` in `.env` to a comma-separated list of Slack user
+   ids allowed to click Approve/Deny (find a user's id via their profile →
+   "Copy member ID"), e.g. `APPROVER_ALLOWLIST=U5EM8P96D,U0123456789`. Required
+   — the app won't start without it, and boot fails if any id isn't a real
+   Slack user.
 
 ```sh
 npm install
@@ -172,5 +178,7 @@ Each location gets its own batched prompt (all its flagged items, one Approve
 All/Deny All) posted to `APPROVAL_CHANNEL_ID`, tagged with the location name.
 Click **Approve All** or **Deny All** in Slack — the running `npm start` process
 handles the click, places a mock order per item on Approve, and updates the
-message in place. A location with a batch still pending skips its next cycle
-rather than posting a duplicate (FR-02).
+message in place. Only users in `APPROVER_ALLOWLIST` can do this (FR-10); anyone
+else gets a private "not authorized" message and the prompt stays open. A
+location with a batch still pending skips its next cycle rather than posting a
+duplicate (FR-02).

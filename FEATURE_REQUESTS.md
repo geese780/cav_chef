@@ -258,11 +258,32 @@ any drafts left in a "placing" state.
 *Do all of these before flipping `AMAZON_MODE=live`. This system spends real money.*
 
 ### FR-10 — Approver authorization allowlist · P0
-`[ ]`
-Right now anyone who can see the channel can approve. Restrict approval to an allowlist
-of Slack user ids (or a group); reject clicks from others with an ephemeral notice.
+`[x]`
+`approvers.js`: `APPROVER_ALLOWLIST` (comma-separated Slack user ids, required —
+added to `startupCheck.js`'s `REQUIRED_ENV_VARS`, and each id is verified to be a
+real Slack user via `users.info` on boot, same fail-fast pattern as the channel
+and calendar checks). `isApprover(userId)` gates **both** `approve_reorder` and
+`deny_reorder` in `app.js` (not just Approve — an unauthorized user shouldn't be
+able to reject a legitimate reorder either) via a shared `rejectUnlessApprover`
+helper, checked *before* `pendingStore.claim` so a rejected click never
+consumes the draft — it stays open for a real approver. A rejected click gets
+`chat.postEphemeral` (visible only to that user), not a channel message.
+Scoped to reorder Approve/Deny only — FR-29's check-in Done button is
+deliberately not gated, since acknowledging a physical-stock check isn't a
+spend action. User-id allowlist only (no Slack group/subteam support) — kept
+out of scope per FR-10's own "(or a group)" being optional, and nothing so far
+has needed it.
+Unit-tested (`test/approvers.test.js`): empty/unset throws, single and
+multi-id parsing with whitespace/trailing-comma handling, membership checks.
+Live-verified against the real workspace both ways: temporarily set the
+allowlist to a different real user and confirmed your own Approve click was
+rejected (`chat.postEphemeral` succeeded, no `chat.update`/claim happened, the
+prompt stayed open and was later approved normally); restored the real
+allowlist and confirmed Approve then worked normally end to end (mock orders
+placed, message updated). Startup validation also verified both ways: a bad
+user id in the allowlist fails boot with `user_not_found`, a valid one passes.
 **Accept:** a non-authorized user clicking Approve does not place an order and sees a
-"not authorized" message; the prompt stays open.
+"not authorized" message; the prompt stays open — verified live, above.
 
 ### FR-11 — Budget guardrails · P0
 `[ ]`
@@ -379,6 +400,6 @@ Expand from the single-user test group to real approvers/buyers once the above h
 2. ~~FR-27~~ ~~FR-28~~ ~~FR-29~~ done — multi-location, calendar-driven reorder trigger, and
    pre-booking check-in notification all live.
 3. ~~FR-06~~ ~~FR-07~~ done — Phase 2's reliability floor (state + idempotency) is complete.
-4. FR-10, FR-11, FR-13 — spend safety (per-location), before any live consideration.
+4. ~~FR-10~~ done. FR-11, FR-13 — spend safety (per-location), before any live consideration.
 5. FR-14 (+ FR-15) — go live on one item once the role clears.
 6. Everything else as you harden toward wider rollout.

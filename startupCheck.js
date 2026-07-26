@@ -3,14 +3,22 @@
  * config fails fast with one clear error instead of surfacing partway
  * through the first reorder cycle. Validates every configured location
  * (FR-27), including calendar access for any location with a calendarId
- * set (FR-28) — locations without one just skip the calendar check.
+ * set (FR-28) — locations without one just skip the calendar check. Also
+ * validates the approver allowlist (FR-10) resolves to real Slack users.
  */
 
 const { validateInventoryListConfig } = require('./inventoryList');
 const { parseLocations } = require('./locations');
 const { buildCalendarClient, getNextEventStart } = require('./googleCalendar');
+const { parseApproverAllowlist } = require('./approvers');
 
-const REQUIRED_ENV_VARS = ['SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'LOCATIONS_JSON', 'APPROVAL_CHANNEL_ID'];
+const REQUIRED_ENV_VARS = [
+  'SLACK_BOT_TOKEN',
+  'SLACK_APP_TOKEN',
+  'LOCATIONS_JSON',
+  'APPROVAL_CHANNEL_ID',
+  'APPROVER_ALLOWLIST'
+];
 
 function assertRequiredEnvVars() {
   const missing = REQUIRED_ENV_VARS.filter(name => !(process.env[name] || '').trim());
@@ -44,9 +52,22 @@ async function assertLocationCalendars(locations) {
   }
 }
 
+async function assertApprovers(client) {
+  const ids = parseApproverAllowlist();
+  for (const userId of ids) {
+    try {
+      await client.users.info({ user: userId });
+    } catch (err) {
+      const reason = (err.data && err.data.error) || err.message;
+      throw new Error(`APPROVER_ALLOWLIST user id "${userId}" is not a valid Slack user: ${reason}`);
+    }
+  }
+}
+
 async function validateStartupConfig({ client, logger }) {
   assertRequiredEnvVars();
   await assertApprovalChannel(client);
+  await assertApprovers(client);
 
   const locations = parseLocations();
   for (const location of locations) {
