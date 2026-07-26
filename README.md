@@ -3,7 +3,11 @@
 Reads each location's inventory Slack List, flags rows at or below their reorder
 threshold, and posts one batched Approve All/Deny All prompt per location to a
 shared approval channel. Approving places a mock order for each flagged item.
-See [FEATURE_REQUESTS.md](./FEATURE_REQUESTS.md) for the full roadmap.
+See [FEATURE_REQUESTS.md](./FEATURE_REQUESTS.md) for the full roadmap, and
+[DATA_HANDLING.md](./DATA_HANDLING.md) / [INCIDENT_RESPONSE_PLAN.md](./INCIDENT_RESPONSE_PLAN.md)
+for how Amazon Information (including PII) is classified, minimized, retained,
+and responded to if something goes wrong — required by Amazon's Data
+Protection Policy for any app with Amazon Business ordering access.
 
 This is a **separate Slack app** from `cav_butler` and the CAV Intake Bot
 (`cav-workflow-steps`) — it reads different Slack Lists and will eventually carry
@@ -245,7 +249,12 @@ added to every unit's price) to simulate it for testing.
 Every reorder prompt posted, decision made (flagged for second approval,
 approved, denied), and order placed is written to a durable, append-only log —
 separate from the pending-draft store, so the history survives even after a
-draft is resolved and removed from it.
+draft is resolved and removed from it. Retained long-term for governance, so
+it's held to a stricter bar than most logs: `auditLog.js` enforces a field
+allowlist at its single write choke point, so only vetted, non-PII fields
+(internal Slack user ids, item asin/name/qty/price, order ids) can ever be
+persisted — anything else, like a stray buyer email or ship-to address, is
+silently dropped before it reaches SQLite, not after.
 
 ```sh
 npm run audit-log

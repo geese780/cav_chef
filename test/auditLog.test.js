@@ -45,6 +45,47 @@ test('auditLog.log / forDraft', async t => {
   });
 });
 
+test('auditLog PII scrub', async t => {
+  const log = createAuditLog(':memory:');
+
+  await t.test('strips non-allowlisted top-level and item fields, keeps legitimate ones', () => {
+    log.log('approved', {
+      draftId: 'd1',
+      locationName: 'WeHo',
+      at: 1000,
+      data: {
+        byUserId: 'U123',
+        firstApproverId: 'U456',
+        deltaTotal: 12.5,
+        buyerEmail: 'buyer@example.com',
+        shipToAddress: { line1: '123 Main St', city: 'Nashville' },
+        items: [
+          {
+            asin: 'B000123',
+            name: 'Gaff Tape',
+            qty: 2,
+            expectedCharge: 20,
+            actualCharge: 22,
+            orderId: 'MOCK-1',
+            shipToAddress: { line1: '123 Main St' }
+          }
+        ]
+      }
+    });
+
+    const [entry] = log.forDraft('d1');
+    assert.deepEqual(entry.data, {
+      byUserId: 'U123',
+      firstApproverId: 'U456',
+      deltaTotal: 12.5,
+      items: [{ asin: 'B000123', name: 'Gaff Tape', qty: 2, expectedCharge: 20, actualCharge: 22, orderId: 'MOCK-1' }]
+    });
+    assert.equal(entry.data.buyerEmail, undefined);
+    assert.equal(entry.data.shipToAddress, undefined);
+    assert.equal(entry.data.items[0].shipToAddress, undefined);
+  });
+});
+
 test('auditLog.recent', async t => {
   const log = createAuditLog(':memory:');
   for (let i = 0; i < 5; i++) {

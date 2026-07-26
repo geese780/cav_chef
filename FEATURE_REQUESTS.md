@@ -386,6 +386,38 @@ this List has no `unit_price` yet); `npm run audit-log` with no argument
 correctly listed recent activity across all three locations.
 **Accept:** for any placed or denied order you can retrieve who decided, when, the items,
 the expected vs actual total, and the resulting order id — verified live, above.
+**Hardening — PII scrub (`TASK_auditlog_pii_scrub.md`):** the audit log is
+retained long-term for governance, and Amazon's Data Protection Policy expects
+buyer PII not to be retained beyond need — so the compliance stance, formalized
+in `DATA_HANDLING.md` §4/§7 and referenced by `INCIDENT_RESPONSE_PLAN.md`, is
+that this log stores none at all, ever. Today's real call sites (`reorderCycle.js`'s
+`posted`, and `app.js`'s `flagged_second_approval`/`approved`/`denied`) never
+actually pass PII in — `placeOrderLive` in `orderingClient.js` already returns
+a narrow `{orderId, status, expectedCharge}` shape rather than Amazon's raw
+order response, and `placeAndResolve` narrows it further to just `{orderId}`
+before it reaches the log call. The risk was structural, not a live bug: any
+future call site (or a change to what `placeOrderLive` returns) could pass a
+raw response containing a ship-to address or buyer email straight into a
+`data` payload with nothing stopping it from being persisted. Closed by adding
+an allowlist filter (`ALLOWED_DATA_KEYS`/`ALLOWED_ITEM_KEYS`, `sanitizeData`/
+`sanitizeItem` in `auditLog.js`) at the single `log()` write choke point —
+anything not explicitly allowlisted is dropped before it reaches SQLite, not
+after. The allowlist was built from the actual fields in use, not guessed:
+`byUserId`, `firstApproverId`, `expectedTotal`, `currentTotal`, `deltaTotal`,
+`hasUnknown`, and `items[]` (itself sanitized to `asin`/`name`/`qty`/
+`expectedCharge`/`actualCharge`/`orderId`) — notably different from the task
+doc's own starting-point guess (`decidedBy`/`flaggedBy`/`delta`/top-level
+`orderId`), which didn't match the real key names once checked against the
+call sites.
+Unit-tested (`test/auditLog.test.js`, new "auditLog PII scrub" block): a
+`data` payload with both legitimate fields and PII decoys (`buyerEmail`, a
+top-level `shipToAddress`, and a `shipToAddress` nested inside an `items`
+entry) persists with the decoys stripped and every legitimate field intact,
+verified via `forDraft`. All prior audit-log tests still pass unchanged,
+confirming the filter is a no-op for payloads that were already clean.
+**Accept (added):** a `log(...)` call whose `data` contains buyer PII persists
+an entry with that PII removed, while every field the real call sites
+actually use survives untouched — verified by the new test, above.
 
 ---
 
