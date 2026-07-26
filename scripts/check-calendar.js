@@ -20,10 +20,15 @@ async function main() {
         console.log(`${location.name}: no calendarId configured (manual trigger only)`);
         continue;
       }
-      const nextEventStart = await getNextEventStart({ calendar, calendarId: location.calendarId });
+      const nextEventStart = await getNextEventStart({
+        calendar,
+        calendarId: location.calendarId,
+        locationMatch: location.locationMatch
+      });
       const due = shouldTriggerCycle({ nextEventStart, now, leadTimeHours: hours });
       console.log(
-        `${location.name}: next booking ${nextEventStart ? nextEventStart.toISOString() : '(none)'} — ` +
+        `${location.name} (matching "${location.locationMatch}"): next booking ` +
+        `${nextEventStart ? nextEventStart.toISOString() : '(none)'} — ` +
         `${due ? '✅ would trigger now' : 'not due yet'} (lead time ${hours}h)`
       );
     }

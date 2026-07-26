@@ -36,7 +36,7 @@ async function assertLocationCalendars(locations) {
   const calendar = buildCalendarClient();
   for (const location of withCalendars) {
     try {
-      await getNextEventStart({ calendar, calendarId: location.calendarId });
+      await getNextEventStart({ calendar, calendarId: location.calendarId, locationMatch: location.locationMatch });
     } catch (err) {
       const reason = (err.errors && err.errors[0] && err.errors[0].reason) || err.message;
       throw new Error(`Location "${location.name}" calendarId "${location.calendarId}" is not reachable: ${reason}`);

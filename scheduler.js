@@ -48,7 +48,11 @@ async function pollDueLocations({ client, calendar, logger }) {
       continue;
     }
 
-    const nextEventStart = await getNextEventStart({ calendar, calendarId: location.calendarId });
+    const nextEventStart = await getNextEventStart({
+      calendar,
+      calendarId: location.calendarId,
+      locationMatch: location.locationMatch
+    });
     if (!shouldTriggerCycle({ nextEventStart, now, leadTimeHours: hours })) {
       const msg = nextEventStart
         ? `[${location.name}] Next booking ${nextEventStart.toISOString()} is outside the ${hours}h lead time — skipping.`

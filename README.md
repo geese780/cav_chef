@@ -74,7 +74,10 @@ are posted, nothing is written anywhere.
 
 Each location's reorder cycle can run based on that location's next booking
 instead of a flat schedule — restock a location once its next booking is within
-a configurable lead time, skip it otherwise.
+a configurable lead time, skip it otherwise. All locations' bookings live in
+**one shared** Google Calendar; each event's `location` field identifies the
+site (e.g. `"WeHo Nashville VizLab 1"`), and each location's `locationMatch`
+picks its bookings out of the shared calendar by matching that field.
 
 1. In Google Cloud Console, create (or use) a project, enable the **Google
    Calendar API**, and create a **service account**. Generate a JSON key for it
@@ -82,13 +85,21 @@ a configurable lead time, skip it otherwise.
    `name@project.iam.gserviceaccount.com`).
 2. Save the key file somewhere on this machine and set
    `GOOGLE_APPLICATION_CREDENTIALS` in `.env` to its path.
-3. For each location that should auto-trigger, share that location's Google
-   Calendar with the service account's email (Settings and sharing → Share with
-   specific people → paste the email, "See all event details" is enough since
-   this only reads). Put that calendar's ID (Settings → Integrate calendar →
-   Calendar ID, usually an email-shaped string) into that location's
-   `calendarId` in `LOCATIONS_JSON`.
-4. Tune `CALENDAR_LEAD_TIME_HOURS` (default 48 — how close a booking needs to be
+3. Share the shared bookings calendar with the service account's email
+   (Settings and sharing → Share with specific people → paste the email, "See
+   all event details" is enough since this only reads). Put that calendar's ID
+   (Settings → Integrate calendar → Calendar ID) into every location's
+   `calendarId` in `LOCATIONS_JSON` — it's the same value for all of them.
+4. For each location, set `locationMatch` to the text that uniquely identifies
+   its bookings in the shared calendar's `location` field — the site name minus
+   the room/lab number, e.g. `"WeHo Nashville"` matches `"WeHo Nashville VizLab
+   1"`, `"WeHo Nashville VizLab 2"`, etc. Matching is a case-insensitive
+   substring check, so make sure each location's text doesn't also appear in
+   another's (e.g. `"Rock Nashville"` vs. `"Rock Lititz"`, not just `"Rock"`).
+   Bookings that don't match any location's text (e.g. `"Remote"` mobile-gear
+   rentals) never trigger anything. If omitted, `locationMatch` defaults to the
+   location's `name`.
+5. Tune `CALENDAR_LEAD_TIME_HOURS` (default 48 — how close a booking needs to be
    to trigger a cycle) and `CALENDAR_POLL_INTERVAL_MINUTES` (default 60 — how
    often `npm start` checks) in `.env` if the defaults don't fit.
 
@@ -96,10 +107,11 @@ a configurable lead time, skip it otherwise.
 npm run check-calendar
 ```
 
-Read-only smoke test: prints each location's next booking and whether it would
-trigger a cycle right now, without posting anything or running any cycle. A
-location with no `calendarId` set just reports "manual trigger only" — no Google
-call is made for it, so this is safe to run before any calendar is configured.
+Read-only smoke test: prints each location's next matching booking and whether
+it would trigger a cycle right now, without posting anything or running any
+cycle. A location with no `calendarId` set just reports "manual trigger only" —
+no Google call is made for it, so this is safe to run before any calendar is
+configured.
 
 ## Running the approve/deny flow end to end
 

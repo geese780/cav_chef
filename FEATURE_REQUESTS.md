@@ -97,25 +97,36 @@ until FR-11 exists).
 
 ### FR-28 — Calendar-driven trigger · P1
 `[x]`
-`googleCalendar.js` wraps the Calendar API (Application Default Credentials via
-`GOOGLE_APPLICATION_CREDENTIALS`, a service account sharing each location's
-calendar — same pattern as sharing a Slack List with the bot). `scheduler.js`
-holds the pure decision (`shouldTriggerCycle` — true once a booking is within
+All locations' bookings live in **one shared** Google Calendar (not one calendar
+per location, as first assumed) — each event's `location` field identifies the
+site (e.g. `"WeHo Nashville VizLab 1"`, `"Rock Lititz VizLab 1"`, `"Remote"` for
+non-site mobile rentals). `googleCalendar.js` wraps the Calendar API (Application
+Default Credentials via `GOOGLE_APPLICATION_CREDENTIALS`, a service account
+shared on that one calendar) and fetches a window of upcoming events, filtering
+by each location's `locationMatch` (a substring match against `location`,
+case-insensitive; defaults to the location's `name` if not set) to find that
+location's next booking — `matchesLocation` is the pure filter, unit-tested for
+the exact cross-contamination risk this design has (two sites both prefixed
+"Rock ", `"Remote"` never matching any real site). `scheduler.js` holds the
+lead-time decision (`shouldTriggerCycle` — true once a matched booking is within
 `CALENDAR_LEAD_TIME_HOURS`, default 48h, including an already-in-progress
 booking) and `pollDueLocations`, which `app.js` runs on startup and every
 `CALENDAR_POLL_INTERVAL_MINUTES` (default 60) thereafter, per location. A
 location with no `calendarId` set is skipped by the poll entirely — no Google
 call is made for it — and falls back to manual-only triggering via
 `npm run run-reorder-cycle`, which remains an unconditional override regardless
-of calendar state. FR-01's startup check also verifies calendar reachability for
-any location with a `calendarId` set.
-Unit-tested (`test/scheduler.test.js`): the lead-time boundary, an
-already-started booking, no upcoming booking, and the env-var overrides/defaults.
-Verified live against a real Google Calendar (WeHo, service account shared per
-README): `npm run check-calendar` correctly read a real booking and reported it
-due; `npm start`'s poll then found that same booking within the 48h lead time and
-automatically ran WeHo's cycle — posting `[WeHo] Reorder needed — 3 item(s)` with
-no manual trigger involved.
+of calendar state. FR-01's startup check also verifies calendar reachability
+(including the location filter) for any location with a `calendarId` set.
+Unit-tested (`test/scheduler.test.js`, `test/googleCalendar.test.js`): the
+lead-time boundary, an already-started booking, no upcoming booking, the
+env-var overrides/defaults, and the location-matching filter itself.
+Verified live against the real shared calendar: the first pass (before
+`locationMatch` existed) surfaced a real bug — WeHo picked up the earliest
+booking on the whole calendar regardless of site, which turned out to belong to
+Rock Nashville. Adding `locationMatch` fixed it: `npm run check-calendar` now
+correctly reports only WeHo's own next booking, and `npm start`'s poll ran WeHo's
+cycle end to end off that correctly-attributed booking with no manual trigger
+involved.
 **Accept:** a location with no upcoming booking runs no cycle (verified with
 `calendarId: ""`); a location with a booking in N days runs a cycle at the
 configured lead time before it (verified live, above); a manual trigger

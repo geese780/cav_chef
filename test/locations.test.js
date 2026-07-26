@@ -16,7 +16,9 @@ test('parseLocations', async t => {
   await t.test('parses a single location', () => {
     withLocationsJson('[{"name":"WeHo","listId":"F0BLN7YRUDN","calendarId":""}]', () => {
       const locations = parseLocations();
-      assert.deepEqual(locations, [{ name: 'WeHo', listId: 'F0BLN7YRUDN', calendarId: '' }]);
+      assert.deepEqual(locations, [
+        { name: 'WeHo', listId: 'F0BLN7YRUDN', calendarId: '', locationMatch: 'WeHo' }
+      ]);
     });
   });
 
@@ -34,6 +36,18 @@ test('parseLocations', async t => {
   await t.test('defaults a missing calendarId to an empty string', () => {
     withLocationsJson('[{"name":"WeHo","listId":"F1"}]', () => {
       assert.equal(parseLocations()[0].calendarId, '');
+    });
+  });
+
+  await t.test('defaults a missing locationMatch to the location name', () => {
+    withLocationsJson('[{"name":"WeHo","listId":"F1"}]', () => {
+      assert.equal(parseLocations()[0].locationMatch, 'WeHo');
+    });
+  });
+
+  await t.test('honors an explicit locationMatch', () => {
+    withLocationsJson('[{"name":"WeHo","listId":"F1","locationMatch":"WeHo Nashville"}]', () => {
+      assert.equal(parseLocations()[0].locationMatch, 'WeHo Nashville');
     });
   });
 
