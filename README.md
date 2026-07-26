@@ -208,8 +208,14 @@ current total against what was expected when it was posted:
 
 A second, distinct approver (also in `APPROVER_ALLOWLIST`) has to click
 **Confirm at new price** before orders place — the same person who flagged it
-clicking again gets rejected with a private message. **Deny All** still
-cancels it either way, no second approver needed to cancel.
+clicking again normally gets rejected with a private message. **Deny All**
+still cancels it either way, no second approver needed to cancel.
+
+With a small team, a second distinct approver isn't always around. Set
+`ALLOW_SELF_SECOND_APPROVAL=true` in `.env` to let the same user confirm their
+own flag instead — the dual-control check itself is still there in the code,
+this just skips it; unset it (or set to anything else) once there are enough
+approvers to go back to requiring a different person.
 
 There's no live Amazon price feed yet (see FR-14), so mock mode can't
 naturally produce drift — set `MOCK_PRICE_DRIFT_PER_UNIT` (a flat $ amount

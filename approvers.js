@@ -25,4 +25,17 @@ function isApprover(userId) {
   return parseApproverAllowlist().includes(userId);
 }
 
-module.exports = { parseApproverAllowlist, isApprover };
+/**
+ * FR-11's second-approval flow normally requires a *different* approver than
+ * whoever flagged the draft (real dual control). With ALLOW_SELF_SECOND_APPROVAL
+ * set, the same user can confirm their own flag instead — meant for small
+ * teams without enough distinct approvers yet. The dual-control check itself
+ * stays intact in pendingStore.claimSecondApproval; this just toggles it off.
+ * Defaults to false (dual control enforced) so leaving it unset is the safe
+ * choice.
+ */
+function allowSelfSecondApproval() {
+  return (process.env.ALLOW_SELF_SECOND_APPROVAL || '').trim().toLowerCase() === 'true';
+}
+
+module.exports = { parseApproverAllowlist, isApprover, allowSelfSecondApproval };

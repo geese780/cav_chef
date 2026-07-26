@@ -326,11 +326,25 @@ independently live-reproducible right now (one real user, no `unit_price`
 data anywhere) — both rely on the unit tests above, which directly exercise
 the exact same atomic store methods and pure decision logic the live paths
 use.
+**Update:** with only 3 people at the company, real dual control (a second
+*distinct* person) isn't always available yet. Added `ALLOW_SELF_SECOND_APPROVAL`
+(default unset/false — dual control still enforced) as a config toggle, not a
+removal of the logic: `pendingStore.claimSecondApproval` takes an `allowSameUser`
+flag that skips just the `firstApprover === secondApprover` check while keeping
+everything else (the atomic claim, the audit trail of who flagged vs. who
+confirmed) intact — a one-line flip back to strict dual control once there are
+enough approvers. `.env` currently has it set to `true`. Live-verified: flagged
+a real draft (Approve → "needs a second approver"), then the *same* user
+clicked "Confirm at new price" and — with the override on — it succeeded this
+time (mock orders placed, log shows both the flag and the confirm from the
+same user id against the same batch id), where before the override it was
+correctly rejected.
 **Accept (reworked from the original static-cap wording):** a draft with
 unverifiable or high-drift pricing can't be single-approved (verified live);
 canceling it via Deny doesn't require a second approver (verified live); a
 second, distinct approver is required to place it, and the same approver who
-flagged it cannot also confirm it (claim path unit-tested).
+flagged it cannot also confirm it, unless `ALLOW_SELF_SECOND_APPROVAL` is set
+(both paths verified live).
 
 ### FR-12 — Pending-approval expiry · P1
 `[ ]`

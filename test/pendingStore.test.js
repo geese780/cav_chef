@@ -126,6 +126,29 @@ test('pendingStore FR-11 second-approval flow', async t => {
   });
 });
 
+test('pendingStore.claimSecondApproval allowSameUser bypass (small-team override)', async t => {
+  const store = createPendingStore(':memory:');
+  const draft = { draftId: 'd3', locationName: 'WeHo', items: [{ item: { asin: 'B1' }, qty: 1, expectedCharge: 10 }] };
+  store.put('d3', draft);
+  store.flagForSecondApproval('d3', {
+    firstApprover: 'A',
+    items: draft.items,
+    expectedTotal: 10,
+    currentTotal: 70,
+    deltaTotal: 60
+  });
+
+  await t.test('the same user is still rejected without allowSameUser', () => {
+    assert.equal(store.claimSecondApproval('d3', { secondApprover: 'A' }), undefined);
+  });
+
+  await t.test('the same user succeeds with allowSameUser: true', () => {
+    const claimed = store.claimSecondApproval('d3', { secondApprover: 'A', allowSameUser: true });
+    assert.equal(claimed.firstApprover, 'A');
+    assert.equal(claimed.deltaTotal, 60);
+  });
+});
+
 test('pendingStore.claimForResolution denies a draft awaiting second approval', async t => {
   const store = createPendingStore(':memory:');
   const draft = { draftId: 'd2', locationName: 'WeHo', items: [{ item: { asin: 'B1' }, qty: 1, expectedCharge: 10 }] };

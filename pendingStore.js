@@ -98,16 +98,18 @@ function createPendingStore(filePath) {
 
       return updated;
     },
-    /** Second, distinct approver confirms a high-drift draft. Fails if the
-     * same user who flagged it tries to also confirm it. */
-    claimSecondApproval(draftId, { secondApprover }) {
+    /** Second approver confirms a high-drift draft. Fails if the same user
+     * who flagged it tries to also confirm it — unless allowSameUser is set
+     * (small-team override, see approvers.allowSelfSecondApproval), in which
+     * case that check is skipped but everything else stays the same. */
+    claimSecondApproval(draftId, { secondApprover, allowSameUser }) {
       const row = db
         .prepare("SELECT data FROM drafts WHERE draft_id = ? AND status = 'awaiting_second_approval'")
         .get(draftId);
       if (!row) return undefined;
 
       const draft = JSON.parse(row.data);
-      if (draft.firstApprover === secondApprover) return undefined;
+      if (!allowSameUser && draft.firstApprover === secondApprover) return undefined;
 
       const result = db
         .prepare("UPDATE drafts SET status = 'placing' WHERE draft_id = ? AND status = 'awaiting_second_approval'")

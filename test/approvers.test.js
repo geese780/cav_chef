@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseApproverAllowlist, isApprover } = require('../approvers');
+const { parseApproverAllowlist, isApprover, allowSelfSecondApproval } = require('../approvers');
 
 function withAllowlist(value, fn) {
   const saved = process.env.APPROVER_ALLOWLIST;
@@ -64,5 +64,32 @@ test('isApprover', async t => {
     withAllowlist('U1,U2', () => {
       assert.equal(isApprover('U3'), false);
     });
+  });
+});
+
+test('allowSelfSecondApproval', async t => {
+  const saved = process.env.ALLOW_SELF_SECOND_APPROVAL;
+  t.after(() => {
+    if (saved === undefined) delete process.env.ALLOW_SELF_SECOND_APPROVAL;
+    else process.env.ALLOW_SELF_SECOND_APPROVAL = saved;
+  });
+
+  await t.test('defaults to false (dual control) when unset', () => {
+    delete process.env.ALLOW_SELF_SECOND_APPROVAL;
+    assert.equal(allowSelfSecondApproval(), false);
+  });
+
+  await t.test('true when set to "true" (case-insensitive)', () => {
+    process.env.ALLOW_SELF_SECOND_APPROVAL = 'true';
+    assert.equal(allowSelfSecondApproval(), true);
+    process.env.ALLOW_SELF_SECOND_APPROVAL = 'TRUE';
+    assert.equal(allowSelfSecondApproval(), true);
+  });
+
+  await t.test('false for any other value', () => {
+    process.env.ALLOW_SELF_SECOND_APPROVAL = 'yes';
+    assert.equal(allowSelfSecondApproval(), false);
+    process.env.ALLOW_SELF_SECOND_APPROVAL = '1';
+    assert.equal(allowSelfSecondApproval(), false);
   });
 });

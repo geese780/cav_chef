@@ -11,7 +11,7 @@ const { validateStartupConfig } = require('./startupCheck');
 const { buildCalendarClient } = require('./googleCalendar');
 const { pollDueLocations, leadTimeHours, pollIntervalMinutes } = require('./scheduler');
 const { pollCheckins, checkinLeadTimeHours, checkinRepingHours } = require('./checkin');
-const { isApprover } = require('./approvers');
+const { isApprover, allowSelfSecondApproval } = require('./approvers');
 const { priceDriftThreshold, evaluateDraftTotal } = require('./budget');
 
 /** CAV Slackbot — inventory reorder approvals (see FEATURE_REQUESTS.md). */
@@ -133,9 +133,11 @@ app.action('approve_reorder', async ({ ack, action, body, client, logger }) => {
   });
 });
 
-/** Second, distinct approver confirms a high-drift draft (FR-11) — must not
- * be the same user who flagged it; that's enforced atomically in
- * pendingStore.claimSecondApproval. */
+/** Second approver confirms a high-drift draft (FR-11) — normally must be a
+ * different user than whoever flagged it, enforced atomically in
+ * pendingStore.claimSecondApproval. ALLOW_SELF_SECOND_APPROVAL (small-team
+ * override, see approvers.js) skips that check without touching the
+ * underlying dual-control logic, so it's a one-line flip to re-enable later. */
 app.action('confirm_price_drift', async ({ ack, action, body, client, logger }) => {
   await ack();
 
@@ -143,7 +145,10 @@ app.action('confirm_price_drift', async ({ ack, action, body, client, logger }) 
   const rejected = await rejectUnlessApprover({ client, channel: body.channel.id, byUserId, action: 'confirm' });
   if (rejected) return;
 
-  const claimed = pendingStore.claimSecondApproval(action.value, { secondApprover: byUserId });
+  const claimed = pendingStore.claimSecondApproval(action.value, {
+    secondApprover: byUserId,
+    allowSameUser: allowSelfSecondApproval()
+  });
   if (!claimed) {
     const draft = pendingStore.get(action.value);
     if (draft && draft.firstApprover === byUserId) {
