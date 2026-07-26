@@ -7,7 +7,7 @@ const pendingStore = require('./pendingStore');
 const checkinStore = require('./checkinStore');
 const { placeOrder, buildIdempotencyKey, getCurrentPrice } = require('./orderingClient');
 const { buildResolvedBlocks, buildPriceDriftBlocks, buildCheckinResolvedBlocks } = require('./blockKit');
-const { validateStartupConfig } = require('./startupCheck');
+const { validateStartupConfig, assertRequiredEnvVars } = require('./startupCheck');
 const { buildCalendarClient } = require('./googleCalendar');
 const { pollDueLocations, leadTimeHours, pollIntervalMinutes } = require('./scheduler');
 const { pollCheckins, checkinLeadTimeHours, checkinRepingHours } = require('./checkin');
@@ -27,6 +27,18 @@ function boltLogLevel() {
   const raw = (process.env.LOG_LEVEL || 'info').trim().toLowerCase();
   const map = { debug: LogLevel.DEBUG, info: LogLevel.INFO, warn: LogLevel.WARN, error: LogLevel.ERROR };
   return map[raw] || LogLevel.INFO;
+}
+
+// Bolt's own App constructor throws a much less clear error if
+// SLACK_BOT_TOKEN/SLACK_APP_TOKEN are missing, and it does so synchronously
+// at module load — before validateStartupConfig() ever runs below. Check
+// the required env vars first so a missing/blank .env fails closed with our
+// own clear message (FR-01) instead of Bolt's internal one.
+try {
+  assertRequiredEnvVars();
+} catch (error) {
+  appLogger.error('Failed to start the app', { error: error.message });
+  process.exit(1);
 }
 
 /** CAV Slackbot — inventory reorder approvals (see FEATURE_REQUESTS.md). */

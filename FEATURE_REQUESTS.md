@@ -586,6 +586,18 @@ the expected "Missing required env var(s)" message, proving the whole module
 graph loads and requires correctly inside the container without needing any
 real Slack/Google secrets in CI (deliberately not injected — no reason for
 every PR to have live Slack-posting ability).
+This smoke test caught a real fail-closed bug on its first CI run: `app.js`
+constructed Bolt's `App` at module load time, before `validateStartupConfig()`
+(and its `assertRequiredEnvVars()` check) ever ran — so with no env vars set,
+Bolt's own constructor threw its own less-clear `AppInitializationError`
+("You must provide an appToken...") instead of our intended "Missing required
+env var(s)" message, and the smoke test's `grep` assertion failed. Reproduced
+locally (with `.env` genuinely removed from disk, not just cleared from the
+shell env — `dotenv` reads the file directly) to confirm the same failure
+outside Docker, then fixed by calling `assertRequiredEnvVars()` before
+constructing `App`, so a missing/blank config now fails closed with our own
+message before Bolt gets a chance to throw its own. Re-verified locally
+(exit code 1, correct message) and via CI after pushing.
 Documented in `README.md` (not executed — no GCP project exists yet):
 `gcloud run deploy` with `--min-instances=1 --max-instances=1
 --no-cpu-throttling`, since this is a persistent Socket-Mode + poll-loop
