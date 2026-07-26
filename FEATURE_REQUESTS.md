@@ -73,7 +73,8 @@ corrupt the cell (update only after order success).
 ## Phase 1.5 — Scheduling & multi-location
 *Needed before real deployment: replaces manual/weekly triggering and generalizes
 from one location to N. Do FR-27 before FR-28 — the trigger should already be
-looping over locations before it gets smarter about timing.*
+looping over locations before it gets smarter about timing. FR-27/FR-28 are done;
+FR-29 (added later, a different notification type) is still open.*
 
 ### FR-27 — Multi-location config & fan-out · P1
 `[x]`
@@ -131,6 +132,35 @@ involved.
 `calendarId: ""`); a location with a booking in N days runs a cycle at the
 configured lead time before it (verified live, above); a manual trigger
 (`npm run run-reorder-cycle`) still works as a per-location override.
+
+### FR-29 — Pre-booking inventory check-in notification · P1
+`[ ]`
+Separate from FR-28's 48h auto-reorder trigger: 216h (9 days) before a
+location's next booking (same shared-calendar `locationMatch` lookup as FR-28,
+reusing `googleCalendar.js`/`locations.js`), post a notification to
+`APPROVAL_CHANNEL_ID`, tagged `[LocationName]`, showing that location's current
+inventory (on-hand/threshold per item — same List read as the reorder cycle,
+but informational only, no Approve/Deny, no orders placed) with a single
+**Done**/**Confirmed** button. This is a manual physical-stock-check prompt for
+a human, not a reorder decision.
+The notification stays open and **re-pings every 24h** if unacknowledged —
+new escalation behavior, distinct from every existing prompt in this system
+(reorder prompts never repeat; FR-12 will *expire* stale ones, the opposite of
+re-pinging). Needs its own persistent tracking (who/when acknowledged, which
+booking it's for) so a restart doesn't lose the escalation state or double-post
+for the same booking — likely a new table alongside `pendingStore`'s SQLite
+file, not a repurposing of the reorder-draft one (different lifecycle: no
+claim/place/remove, just posted → escalating → acknowledged).
+Two new config knobs: lead time (216h, distinct from
+`CALENDAR_LEAD_TIME_HOURS`) and re-ping interval (24h) — both should be
+env-var-overridable following the existing `leadTimeHours()`/
+`pollIntervalMinutes()` pattern in `scheduler.js`.
+**Accept:** a booking 216h out gets exactly one initial notification; if
+unacknowledged, a new ping appears roughly every 24h (not a duplicate thread,
+either updates the same message or clearly supersedes it); clicking Done/Confirmed
+stops all further pings and logs who/when; a restart mid-escalation doesn't lose
+track of what's still outstanding or repost a fresh notification for an already-
+acknowledged booking.
 
 ---
 
@@ -322,8 +352,9 @@ Expand from the single-user test group to real approvers/buyers once the above h
 ## Suggested near-term order
 
 1. ~~FR-02~~ ~~FR-03~~ ~~FR-01~~ done — correctness locked in while still in mock mode.
-2. ~~FR-27~~ ~~FR-28~~ done — Phase 1.5 complete, multi-location + calendar trigger both live.
+2. ~~FR-27~~ ~~FR-28~~ done — multi-location + calendar-driven reorder trigger both live.
 3. ~~FR-06~~ ~~FR-07~~ done — Phase 2's reliability floor (state + idempotency) is complete.
-4. FR-10, FR-11, FR-13 — spend safety (per-location), before any live consideration.
-5. FR-14 (+ FR-15) — go live on one item once the role clears.
-6. Everything else as you harden toward wider rollout.
+4. FR-29 — pre-booking inventory check-in notification (independent of spend safety, can slot in anytime).
+5. FR-10, FR-11, FR-13 — spend safety (per-location), before any live consideration.
+6. FR-14 (+ FR-15) — go live on one item once the role clears.
+7. Everything else as you harden toward wider rollout.
