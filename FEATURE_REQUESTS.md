@@ -522,9 +522,22 @@ external monitor pointed at a deployed instance (Phase 6/FR-23), not
 something verifiable from a local machine.
 
 ### FR-21 — Secrets manager integration · P1
-`[ ]`
-Move tokens out of `.env` into a managed secret store for production.
-**Accept:** prod runs with no plaintext secrets on disk; local dev still works via `.env`.
+`[~]`
+No app code changes needed or made — Cloud Run (FR-23's target) injects Secret
+Manager secrets directly as environment variables at deploy time, and every
+config read in this codebase already goes through `process.env`, so the
+existing code is already compatible without modification. Documented in
+`README.md`'s Cloud Run section: `gcloud secrets create` + `--set-secrets` on
+deploy. Also documented there: `GOOGLE_APPLICATION_CREDENTIALS` shouldn't ship
+as a key file at all on Cloud Run — grant the service's own runtime service
+account Calendar API access directly and leave it unset, since
+`googleCalendar.js` already falls back to Application Default Credentials.
+Stays `[~]` rather than `[x]`: this is deploy-time configuration that hasn't
+been exercised against a real GCP project (none exists yet — same gating as
+FR-23 itself), so "prod runs with no plaintext secrets on disk" is a documented
+plan, not something verified running.
+**Accept:** prod runs with no plaintext secrets on disk; local dev still works via `.env`
+— the `.env` half is true today (already always true); the prod half is unverified.
 
 ---
 
@@ -562,9 +575,30 @@ job. Verified both directions live: a real failure (above) blocked the run,
 and the fixed commit passed.
 
 ### FR-23 — Containerize & deploy · P1
-`[ ]`
-Dockerfile + deployment to your hosting target, running as a long-lived worker.
-**Accept:** the bot runs in the target environment with Socket Mode and the scheduler active.
+`[~]`
+Target confirmed as Google Cloud Run. `Dockerfile` (Node 24 for `node:sqlite`,
+matching dev/CI), `.dockerignore` (excludes `node_modules`, `data/`,
+`secrets/`, `.env*`, `.git`). No Docker available on the machine that built
+this, so real verification came from adding a `docker-build` job to CI
+(`.github/workflows/ci.yml`) — builds the image on a real Linux runner and
+smoke-tests it: runs the container with no config and asserts it exits 1 with
+the expected "Missing required env var(s)" message, proving the whole module
+graph loads and requires correctly inside the container without needing any
+real Slack/Google secrets in CI (deliberately not injected — no reason for
+every PR to have live Slack-posting ability).
+Documented in `README.md` (not executed — no GCP project exists yet):
+`gcloud run deploy` with `--min-instances=1 --max-instances=1
+--no-cpu-throttling`, since this is a persistent Socket-Mode + poll-loop
+worker, not a request-driven service — Cloud Run's scale-to-zero and
+between-request CPU throttling defaults would both break it. Also documented,
+as a flagged-not-fixed known gap: local SQLite storage (`data/`) doesn't
+survive a Cloud Run redeploy/restart, since local disk is ephemeral per
+instance — needs a persistent volume mount or a managed DB migration before
+real production reliance, a decision deliberately left open rather than
+guessed at.
+**Accept:** the bot runs in the target environment with Socket Mode and the
+scheduler active — the container build/module-load half is verified via CI;
+actually running in Cloud Run isn't, pending a real GCP project.
 
 ### FR-24 — Staging vs production separation · P2
 `[ ]`
@@ -595,6 +629,10 @@ Expand from the single-user test group to real approvers/buyers once the above h
 5. FR-14 (+ FR-15) — sketched against public docs, `[~]` not `[x]`; verify against a
    real order once the Amazon Business Order Placement role clears, then go live on
    one item.
-6. ~~FR-18~~ ~~FR-19~~ ~~FR-20~~ done — structured logs, error alerting, and a health
-   endpoint (the last one doubling as required Cloud Run infrastructure for FR-23).
-7. Everything else as you harden toward wider rollout.
+6. ~~FR-18~~ ~~FR-19~~ ~~FR-20~~ ~~FR-22~~ done — structured logs, error alerting,
+   a health endpoint (doubling as required Cloud Run infrastructure), and CI
+   (which immediately caught a real cross-platform test bug).
+7. FR-23 (+ FR-21) — Dockerfile/CI-verified, `[~]` not `[x]`; actually deploying
+   to Cloud Run and deciding on persistent storage for `data/` are still open,
+   pending a real GCP project.
+8. Everything else as you harden toward wider rollout.

@@ -18,3 +18,33 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+
+  # FR-23. No Docker available on the dev machine that wrote this, so this
+  # job is the actual verification that the Dockerfile builds and the app's
+  # module graph loads correctly in a real container. Doesn't run against
+  # real Slack/Google credentials (none are injected as CI secrets, and
+  # shouldn't be — no reason for every PR to have live Slack-posting
+  # ability) — instead confirms the container starts cleanly and fails
+  # closed with a clear config error when required env vars are absent,
+  # which is the correct behavior (FR-01) and proves every module actually
+  # loads without a require()/syntax error inside the container.
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t cav-chef:ci .
+      - name: Smoke test — container starts and fails closed without config
+        run: |
+          set +e
+          output=$(docker run --rm cav-chef:ci 2>&1)
+          exit_code=$?
+          set -e
+          echo "$output"
+          if [ "$exit_code" -ne 1 ]; then
+            echo "Expected exit code 1 (missing required env vars), got $exit_code"
+            exit 1
+          fi
+          echo "$output" | grep -q "Missing required env var" || {
+            echo "Expected the missing-env-var error message in the output"
+            exit 1
+          }

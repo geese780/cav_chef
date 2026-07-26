@@ -290,3 +290,67 @@ order actually appears in Amazon Business, and cross-check `orderingClient.js`'s
 request/response handling against what Amazon actually returned — the EU/FE
 base URLs and the exact attribute wire format are the least-confirmed parts
 and most likely to need fixing first.
+
+## Deploying to Google Cloud Run (FR-23)
+
+No GCP project exists yet to actually run `gcloud run deploy` against, so
+**this has not been deployed for real** — the `Dockerfile` build itself is
+verified (a dedicated CI job builds it and confirms the container starts
+cleanly, see `.github/workflows/ci.yml`), but the deploy steps below are
+documented, not executed.
+
+**This is a persistent worker, not a request-driven service** — Socket Mode
+holds an open WebSocket, and the poll loop runs on a timer independent of any
+inbound HTTP request. Cloud Run defaults (scale-to-zero, CPU throttled
+between requests) would starve both. Deploy with:
+
+```sh
+gcloud run deploy cav-chef \
+  --image <your-image> \
+  --region <your-region> \
+  --min-instances=1 \
+  --max-instances=1 \
+  --no-cpu-throttling \
+  --port=8080
+```
+
+`--min-instances=1` keeps exactly one instance always running (no scale-to-zero
+killing the Socket Mode connection); `--max-instances=1` avoids two instances
+both polling and potentially double-posting; `--no-cpu-throttling` keeps CPU
+allocated between requests so `setInterval`'s poll loop and the WebSocket
+connection both keep running, not just during an inbound HTTP request to
+`/health`.
+
+### Secrets (FR-21)
+
+Cloud Run can inject Secret Manager secrets directly as environment variables
+at deploy time — no application code change needed, since config is already
+read via `process.env` everywhere:
+
+```sh
+gcloud secrets create slack-bot-token --data-file=- <<< "$SLACK_BOT_TOKEN"
+# ...repeat for SLACK_APP_TOKEN, APPROVER_ALLOWLIST, and anything else sensitive
+
+gcloud run deploy cav-chef \
+  ... \
+  --set-secrets=SLACK_BOT_TOKEN=slack-bot-token:latest,SLACK_APP_TOKEN=slack-app-token:latest
+```
+
+For `GOOGLE_APPLICATION_CREDENTIALS`: rather than shipping a downloaded service
+account key file at all, the cleaner Cloud Run–native approach is to grant the
+Cloud Run service's own runtime service account Calendar API access directly
+(share each location's calendar with `<service-account>@<project>.iam.gserviceaccount.com`,
+Cloud Run's default or a custom one) and leave `GOOGLE_APPLICATION_CREDENTIALS`
+unset — `googleCalendar.js`'s `google.auth.GoogleAuth()` already falls back to
+Application Default Credentials with no code change needed.
+
+### Known gap: local SQLite storage doesn't survive a Cloud Run redeploy
+
+`pendingStore.js`/`checkinStore.js`/`auditLog.js` all write to local disk
+under `data/`. On Cloud Run, local disk is ephemeral per instance — a redeploy,
+crash-and-restart, or instance replacement loses pending drafts, check-ins,
+and audit history. This wasn't addressed as part of FR-23; before relying on
+this in production, either mount a persistent volume (Cloud Run supports GCS
+FUSE or direct persistent disk mounts) at `/app/data`, or migrate these three
+stores to a managed database (e.g. Cloud SQL). Worth deciding before the first
+real deploy, not after losing state in one.
