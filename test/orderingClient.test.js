@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { placeOrder, buildIdempotencyKey, getCurrentPrice, buildOrderRequestBody, regionBaseUrl } = require('../orderingClient');
+const { resetTokenCache } = require('../amazonAuth');
 
 test('buildIdempotencyKey', async t => {
   await t.test('combines draftId and asin', () => {
@@ -155,6 +156,134 @@ test('buildOrderRequestBody (FR-14, unverified live path)', async t => {
       /AMAZON_PAYMENT_METHOD_ID must be set/
     );
     process.env.AMAZON_PAYMENT_METHOD_ID = REQUIRED.AMAZON_PAYMENT_METHOD_ID;
+  });
+});
+
+test('placeOrder (live mode, FR-08 retry behavior, unverified against real Amazon)', async t => {
+  const REQUIRED = {
+    AMAZON_MODE: 'live',
+    AMAZON_CLIENT_ID: 'client-1',
+    AMAZON_CLIENT_SECRET: 'secret-1',
+    AMAZON_REFRESH_TOKEN: 'refresh-1',
+    AMAZON_PAYMENT_METHOD_ID: 'pm-1',
+    AMAZON_BUYING_GROUP_ID: 'grp-1',
+    AMAZON_BUYER_EMAIL: 'buyer@example.com',
+    AMAZON_SHIP_TO_ADDRESS_ID: 'addr-1',
+    AMAZON_RETRY_COUNT: '3',
+    AMAZON_RETRY_BASE_DELAY_MS: '1'
+  };
+  const saved = {};
+  t.beforeEach(() => {
+    for (const [key, value] of Object.entries(REQUIRED)) {
+      saved[key] = process.env[key];
+      process.env[key] = value;
+    }
+    resetTokenCache();
+  });
+  t.afterEach(() => {
+    for (const key of Object.keys(REQUIRED)) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  });
+
+  function mockFetch(handler) {
+    const original = global.fetch;
+    global.fetch = handler;
+    return () => {
+      global.fetch = original;
+    };
+  }
+
+  const acceptedResponse = {
+    lineItems: [
+      {
+        acceptedItems: [
+          {
+            artifacts: [
+              { acceptanceArtifactType: 'OrderIdentifier', identifier: 'AMZ-ORDER-1' },
+              { acceptanceArtifactType: 'Charge', amount: { amount: 12.5 } }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+
+  await t.test('retries a transient 503 from the ordering endpoint and succeeds', async () => {
+    let orderCalls = 0;
+    const restore = mockFetch(async url => {
+      if (url.includes('auth/o2/token')) {
+        return { ok: true, json: async () => ({ access_token: 'atoken-1', expires_in: 3600 }) };
+      }
+      orderCalls++;
+      if (orderCalls < 2) return { ok: false, status: 503, json: async () => ({ error: 'unavailable' }) };
+      return { ok: true, json: async () => acceptedResponse };
+    });
+    try {
+      const result = await placeOrder({
+        item: { asin: 'B076CHDX7P', name: 'Kombucha' },
+        qty: 1,
+        expectedCharge: 12.5,
+        idempotencyKey: 'd1:B076CHDX7P'
+      });
+      assert.equal(result.orderId, 'AMZ-ORDER-1');
+      assert.equal(orderCalls, 2);
+    } finally {
+      restore();
+    }
+  });
+
+  await t.test('does not retry a business-logic rejection (no acceptedItems)', async () => {
+    let orderCalls = 0;
+    const restore = mockFetch(async url => {
+      if (url.includes('auth/o2/token')) {
+        return { ok: true, json: async () => ({ access_token: 'atoken-1', expires_in: 3600 }) };
+      }
+      orderCalls++;
+      return { ok: true, json: async () => ({ lineItems: [{ rejectedItems: [{ reason: 'ExpectedCharge mismatch' }] }] }) };
+    });
+    try {
+      await assert.rejects(
+        () =>
+          placeOrder({
+            item: { asin: 'B076CHDX7P', name: 'Kombucha' },
+            qty: 1,
+            expectedCharge: 12.5,
+            idempotencyKey: 'd1:B076CHDX7P'
+          }),
+        /Amazon rejected the order/
+      );
+      assert.equal(orderCalls, 1);
+    } finally {
+      restore();
+    }
+  });
+
+  await t.test('gives up after exhausting retries on a persistent 500', async () => {
+    let orderCalls = 0;
+    const restore = mockFetch(async url => {
+      if (url.includes('auth/o2/token')) {
+        return { ok: true, json: async () => ({ access_token: 'atoken-1', expires_in: 3600 }) };
+      }
+      orderCalls++;
+      return { ok: false, status: 500, json: async () => ({ error: 'server error' }) };
+    });
+    try {
+      await assert.rejects(
+        () =>
+          placeOrder({
+            item: { asin: 'B076CHDX7P', name: 'Kombucha' },
+            qty: 1,
+            expectedCharge: 12.5,
+            idempotencyKey: 'd1:B076CHDX7P'
+          }),
+        /Amazon order placement request failed: 500/
+      );
+      assert.equal(orderCalls, 4); // 1 initial attempt + 3 retries (AMAZON_RETRY_COUNT=3)
+    } finally {
+      restore();
+    }
   });
 });
 

@@ -17,9 +17,9 @@ than either of those bots. Own manifest, own tokens, own process.
 ## Status
 
 Phase 1 (correctness), Phase 1.5 (scheduling & multi-location), and Phase 3
-(spend safety & governance) are all done; Phase 2 (reliability)'s state and
-idempotency floor (FR-06/FR-07) is done, with graceful shutdown/recovery
-(FR-09) partially live (see below) and retry/backoff (FR-08) still open.
+(spend safety & governance) are all done; Phase 2 (reliability)'s state,
+idempotency, and retry/backoff floor (FR-06/FR-07/FR-08) is done, with
+graceful shutdown/recovery (FR-09) partially live (see below).
 Config/column validation on boot (FR-01), unit tests for the threshold logic
 (FR-03), and cross-cycle de-dup so a still-low item doesn't get re-prompted every
 cycle (FR-02). Multi-location support (FR-27): each location has its own
@@ -332,6 +332,19 @@ AMAZON_BUYING_GROUP_ID=
 AMAZON_BUYER_EMAIL=
 AMAZON_SHIP_TO_ADDRESS_ID=
 ```
+
+Two more, optional (FR-08 — retry/backoff on transient Amazon errors; both
+have sensible defaults):
+
+```
+AMAZON_RETRY_COUNT=4               # bounded exponential-backoff retries on 429/5xx
+AMAZON_RETRY_BASE_DELAY_MS=500     # base delay before backoff/jitter is applied
+```
+
+Slack needs no equivalent setting — `@slack/web-api`'s `WebClient` (used for
+every Slack call this app makes) already retries 429s and transient errors
+automatically by default, honoring `Retry-After`, with no code or config
+here to enable it.
 
 Then, before ever pointing this at a real spend-capable account: set
 `AMAZON_MODE=live`, place one cheap/returnable item as a dry run, confirm the

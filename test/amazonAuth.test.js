@@ -117,4 +117,47 @@ test('getAccessToken (FR-14/15, unverified live path)', async t => {
       }
     })
   );
+
+  await t.test('does not retry a permanent 401 (FR-08) — fails on the first attempt', () =>
+    withCredentials(async () => {
+      let calls = 0;
+      const restore = mockFetch(async () => {
+        calls++;
+        return { ok: false, status: 401, text: async () => 'invalid_grant' };
+      });
+      try {
+        await assert.rejects(() => getAccessToken(), /LWA token exchange failed: 401/);
+        assert.equal(calls, 1);
+      } finally {
+        restore();
+      }
+    })
+  );
+
+  await t.test('retries a transient 503 (FR-08) and succeeds once it clears', () =>
+    withCredentials(async () => {
+      const savedCount = process.env.AMAZON_RETRY_COUNT;
+      const savedDelay = process.env.AMAZON_RETRY_BASE_DELAY_MS;
+      process.env.AMAZON_RETRY_COUNT = '3';
+      process.env.AMAZON_RETRY_BASE_DELAY_MS = '1';
+
+      let calls = 0;
+      const restore = mockFetch(async () => {
+        calls++;
+        if (calls < 3) return { ok: false, status: 503, text: async () => 'unavailable' };
+        return { ok: true, json: async () => ({ access_token: 'atoken-retry', expires_in: 3600 }) };
+      });
+      try {
+        const token = await getAccessToken();
+        assert.equal(token, 'atoken-retry');
+        assert.equal(calls, 3);
+      } finally {
+        restore();
+        if (savedCount === undefined) delete process.env.AMAZON_RETRY_COUNT;
+        else process.env.AMAZON_RETRY_COUNT = savedCount;
+        if (savedDelay === undefined) delete process.env.AMAZON_RETRY_BASE_DELAY_MS;
+        else process.env.AMAZON_RETRY_BASE_DELAY_MS = savedDelay;
+      }
+    })
+  );
 });

@@ -18,6 +18,7 @@
  */
 
 const { getAccessToken } = require('./amazonAuth');
+const { withRetry, isRetryableStatus } = require('./retry');
 
 function mockOrderId() {
   return `MOCK-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -92,41 +93,54 @@ function buildOrderRequestBody({ idempotencyKey, item, qty, expectedCharge }) {
 }
 
 /** UNVERIFIED — see file header. Places one live order via the Amazon
- * Business Ordering API. */
+ * Business Ordering API. Retried on 429/5xx and on the fetch call itself
+ * throwing (FR-08) — safe because idempotencyKey (FR-07) means a retry
+ * can't double-place even if the first attempt's response was merely lost.
+ * A business-logic rejection (Amazon explicitly rejected the order, e.g. an
+ * ExpectedCharge mismatch) is permanent and is not retried. */
 async function placeOrderLive({ item, qty, expectedCharge, idempotencyKey }) {
-  const accessToken = await getAccessToken();
-  const body = buildOrderRequestBody({ idempotencyKey, item, qty, expectedCharge });
+  return withRetry(
+    async () => {
+      const accessToken = await getAccessToken();
+      const body = buildOrderRequestBody({ idempotencyKey, item, qty, expectedCharge });
 
-  const res = await fetch(`${regionBaseUrl()}${ORDERING_API_PATH}`, {
-    method: 'POST',
-    headers: { accept: 'application/json', 'content-type': 'application/json', 'x-amz-access-token': accessToken },
-    body: JSON.stringify(body)
-  });
+      const res = await fetch(`${regionBaseUrl()}${ORDERING_API_PATH}`, {
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json', 'x-amz-access-token': accessToken },
+        body: JSON.stringify(body)
+      });
 
-  const result = await res.json();
-  if (!res.ok) {
-    throw new Error(`Amazon order placement request failed: ${res.status} ${JSON.stringify(result)}`);
-  }
+      const result = await res.json();
+      if (!res.ok) {
+        const err = new Error(`Amazon order placement request failed: ${res.status} ${JSON.stringify(result)}`);
+        err.retryable = isRetryableStatus(res.status);
+        throw err;
+      }
 
-  // Response shape per docs: lineItems[].acceptedItems[].artifacts[] holds
-  // UnitPrice/Charge/OrderIdentifier by acceptanceArtifactType. A 200 with
-  // rejectedItems instead of acceptedItems means Amazon rejected the order
-  // as business logic (e.g. ExpectedCharge mismatch), not a request error.
-  const lineItem = result.lineItems && result.lineItems[0];
-  const accepted = lineItem && lineItem.acceptedItems && lineItem.acceptedItems[0];
-  if (!accepted) {
-    throw new Error(`Amazon rejected the order: ${JSON.stringify(result)}`);
-  }
+      // Response shape per docs: lineItems[].acceptedItems[].artifacts[] holds
+      // UnitPrice/Charge/OrderIdentifier by acceptanceArtifactType. A 200 with
+      // rejectedItems instead of acceptedItems means Amazon rejected the order
+      // as business logic (e.g. ExpectedCharge mismatch), not a request error.
+      const lineItem = result.lineItems && result.lineItems[0];
+      const accepted = lineItem && lineItem.acceptedItems && lineItem.acceptedItems[0];
+      if (!accepted) {
+        const err = new Error(`Amazon rejected the order: ${JSON.stringify(result)}`);
+        err.retryable = false;
+        throw err;
+      }
 
-  const artifacts = accepted.artifacts || [];
-  const orderIdArtifact = artifacts.find(a => a.acceptanceArtifactType === 'OrderIdentifier');
-  const chargeArtifact = artifacts.find(a => a.acceptanceArtifactType === 'Charge');
+      const artifacts = accepted.artifacts || [];
+      const orderIdArtifact = artifacts.find(a => a.acceptanceArtifactType === 'OrderIdentifier');
+      const chargeArtifact = artifacts.find(a => a.acceptanceArtifactType === 'Charge');
 
-  return {
-    orderId: orderIdArtifact && orderIdArtifact.identifier,
-    status: 'placed',
-    expectedCharge: chargeArtifact && chargeArtifact.amount && chargeArtifact.amount.amount
-  };
+      return {
+        orderId: orderIdArtifact && orderIdArtifact.identifier,
+        status: 'placed',
+        expectedCharge: chargeArtifact && chargeArtifact.amount && chargeArtifact.amount.amount
+      };
+    },
+    { isRetryable: err => err.retryable !== false }
+  );
 }
 
 /**

@@ -241,10 +241,59 @@ proven via `claim`'s atomicity (unit-tested) since Slack's own UI prevents
 manually reproducing literal concurrent clicks.
 
 ### FR-08 — Retry, backoff & rate-limit handling · P2
-`[ ]`
-Handle Slack Tier-2 rate limits (Lists) and transient Amazon/Slack errors with bounded
-exponential backoff; respect `Retry-After`.
-**Accept:** a simulated 429 is retried and the cycle completes; permanent errors fail loudly.
+`[x]`
+**Slack half needed no new code at all — a real discovery, not an
+assumption:** every Slack call in this app (`app.client` inside `app.js`,
+and every script's own `new WebClient(token)`) already goes through
+`@slack/web-api`'s `WebClient`, which retries automatically by default —
+`retryConfig` defaults to `tenRetriesInAboutThirtyMinutes` (10 retries,
+~30min span, jittered) and `rejectRateLimitedCalls` defaults to `false`, so
+a 429 (Slack Tier-2 rate limit, e.g. on `slackLists.items.list`) is retried
+transparently honoring `Retry-After`, not thrown. Nothing in this codebase
+overrides either option. Confirmed by reading `@slack/web-api`'s actual
+installed source (`retry-policies.js`, `WebClient.js`'s request handling of
+`response.status === 429`), then confirmed again at runtime: constructing
+the real `app.js` `App` (no network call — the constructor alone) and
+inspecting `app.client.retryConfig` printed exactly `{ retries: 10, factor:
+1.96821, randomize: true }` and `rejectRateLimitedCalls: false`.
+**Amazon half is real, new code** — `orderingClient.js`/`amazonAuth.js`'s
+raw `fetch()` calls had no retry of their own. Added `retry.js`:
+`withRetry(fn, { isRetryable })`, bounded exponential backoff with jitter
+(`AMAZON_RETRY_COUNT` default 4, `AMAZON_RETRY_BASE_DELAY_MS` default 500,
+same env-var-with-default pattern as the rest of the codebase), and
+`isRetryableStatus(status)` (429/5xx retryable, any other 4xx isn't).
+Wired into `fetchAccessToken` (LWA token exchange) and `placeOrderLive`
+(order placement) — both throw with an `err.retryable` flag set from the
+HTTP status, and `withRetry`'s `isRetryable` checks that flag (defaults to
+retryable when unset, so a bare network-level throw — DNS failure,
+connection reset — is retried too). Retrying `placeOrderLive` is safe
+specifically *because* FR-07's `buildIdempotencyKey` is already threaded
+through as `externalId`/`PurchaseOrderNumber` — a retry can't double-place
+even if the first attempt's response was merely lost to a network blip. A
+business-logic rejection (Amazon explicitly rejects the order, e.g. an
+`ExpectedCharge` mismatch) is marked non-retryable and fails immediately —
+retrying wouldn't change Amazon's decision.
+Unit-tested (`test/retry.test.js`): `isRetryableStatus`'s boundaries,
+`retryCount`/`retryBaseDelayMs`'s env-var override/defaults, and `withRetry`
+itself (succeeds first try, retries-then-succeeds, exhausts retries and
+throws, and skips retrying entirely on a non-retryable error). Extended
+`test/amazonAuth.test.js` (a permanent 401 fails on the first attempt; a
+transient 503 retries twice then succeeds) and `test/orderingClient.test.js`
+(through the public `placeOrder({..., })` with `AMAZON_MODE=live` and a
+mocked `fetch` distinguishing the LWA endpoint from the ordering endpoint):
+retries a transient 503 and succeeds, does not retry a business rejection,
+and gives up after exhausting retries on a persistent 500 — all using tiny
+`AMAZON_RETRY_BASE_DELAY_MS` overrides so the suite stays fast.
+Same unverified-pending-credentials caveat as FR-14/FR-15: the Amazon retry
+logic is real and unit-tested against a mocked `fetch`, but has never run
+against Amazon's actual service, since no live credentials exist yet.
+**Accept:** a simulated 429 is retried and the cycle completes — true for
+Slack by default (verified above, no code needed) and true for Amazon
+against a mocked 429/5xx (unit-tested, above; not verifiable against the
+real Amazon API without live credentials). Permanent errors fail loudly —
+verified for both a Slack-side non-2xx/non-429 response (unchanged
+existing behavior) and an Amazon 4xx/business rejection (unit-tested,
+above).
 
 ### FR-09 — Graceful shutdown & recovery · P2
 `[~]`
@@ -762,11 +811,11 @@ Expand from the single-user test group to real approvers/buyers once the above h
 1. ~~FR-02~~ ~~FR-03~~ ~~FR-01~~ done — correctness locked in while still in mock mode.
 2. ~~FR-27~~ ~~FR-28~~ ~~FR-29~~ done — multi-location, calendar-driven reorder trigger, and
    pre-booking check-in notification all live.
-3. ~~FR-06~~ ~~FR-07~~ done — Phase 2's reliability floor (state + idempotency) is complete.
-   FR-09 is `[~]` — boot-time reconciliation is live-verified, graceful `SIGTERM`
-   handling is coded but needs a real Linux/Cloud Run restart to verify (this dev
-   machine is Windows, which doesn't deliver real POSIX signals). FR-08 (retry/backoff)
-   remains open.
+3. ~~FR-06~~ ~~FR-07~~ ~~FR-08~~ done — Phase 2's reliability floor (state, idempotency,
+   retry/backoff) is complete. FR-09 is `[~]` — boot-time reconciliation is
+   live-verified, graceful `SIGTERM` handling is coded but needs a real Linux/Cloud Run
+   restart to verify (this dev machine is Windows, which doesn't deliver real POSIX
+   signals).
 4. ~~FR-10~~ ~~FR-11~~ ~~FR-12~~ ~~FR-13~~ done — Phase 3 (spend safety & governance) is complete.
 5. FR-14 (+ FR-15) — sketched against public docs, `[~]` not `[x]`; verify against a
    real order once the Amazon Business Order Placement role clears, then go live on
