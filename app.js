@@ -11,6 +11,7 @@ const { validateStartupConfig, assertRequiredEnvVars } = require('./startupCheck
 const { buildCalendarClient } = require('./googleCalendar');
 const { pollDueLocations, leadTimeHours, pollIntervalMinutes } = require('./scheduler');
 const { pollCheckins, checkinLeadTimeHours, checkinRepingHours } = require('./checkin');
+const { pollExpiry, pendingApprovalExpiryHours } = require('./expiry');
 const { isApprover, allowSelfSecondApproval } = require('./approvers');
 const { priceDriftThreshold, evaluateDraftTotal } = require('./budget');
 const auditLog = require('./auditLog');
@@ -324,12 +325,16 @@ app.action('confirm_checkin', async ({ ack, action, body, client }) => {
     // Pre-booking inventory check-in (FR-29): same calendar/poll cadence, a
     // separate 216h-out heads-up that re-pings every 24h until Done is
     // clicked — independent of the 48h auto-reorder trigger above.
+    // Pending-approval expiry (FR-12): same poll cadence, but not
+    // calendar-driven — checks every still-open draft regardless of location,
+    // so a draft doesn't stay approvable indefinitely at a stale price.
     const calendar = buildCalendarClient();
     const intervalMinutes = pollIntervalMinutes();
     const poll = () =>
       Promise.all([
         pollDueLocations({ client: app.client, calendar, logger: appLogger }),
-        pollCheckins({ client: app.client, calendar, logger: appLogger })
+        pollCheckins({ client: app.client, calendar, logger: appLogger }),
+        pollExpiry({ client: app.client, logger: appLogger })
       ])
         .then(() => recordPoll())
         .catch(async err => {
@@ -343,7 +348,8 @@ app.action('confirm_checkin', async ({ ack, action, body, client }) => {
       intervalMinutes,
       reorderLeadTimeHours: leadTimeHours(),
       checkinLeadTimeHours: checkinLeadTimeHours(),
-      checkinRepingHours: checkinRepingHours()
+      checkinRepingHours: checkinRepingHours(),
+      pendingApprovalExpiryHours: pendingApprovalExpiryHours()
     });
   } catch (error) {
     appLogger.error('Failed to start the app', { error: error.message });

@@ -83,7 +83,7 @@ function createAuditLog(filePath) {
   `);
 
   return {
-    /** eventType: 'posted' | 'flagged_second_approval' | 'approved' | 'denied' */
+    /** eventType: 'posted' | 'flagged_second_approval' | 'approved' | 'denied' | 'expired' */
     log(eventType, { draftId, locationName, at, data } = {}) {
       db.prepare(
         'INSERT INTO audit_log (event_type, draft_id, location_name, at, data) VALUES (?, ?, ?, ?, ?)'

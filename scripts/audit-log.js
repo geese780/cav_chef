@@ -35,6 +35,11 @@ function formatEntry({ id, eventType, draftId, locationName, at, data }) {
     for (const item of data.items || []) {
       lines.push(`    ${item.name || item.asin} x${item.qty}`);
     }
+  } else if (eventType === 'expired') {
+    lines.push(`    expired — approval window passed, no order placed`);
+    for (const item of data.items || []) {
+      lines.push(`    ${item.name || item.asin} x${item.qty}`);
+    }
   }
 
   return lines.join('\n');

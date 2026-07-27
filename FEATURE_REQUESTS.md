@@ -256,10 +256,11 @@ any drafts left in a "placing" state.
 
 ## Phase 3 — Spend safety & governance
 *Do all of these before flipping `AMAZON_MODE=live`. This system spends real money.
-All three done — approver allowlist, price-drift guardrail, and audit log are
-all live. Still worth revisiting `ALLOW_SELF_SECOND_APPROVAL` (FR-11) once the
-team is bigger than 3 people, and filling in `unit_price` on the Lists so the
-drift check has real data instead of always treating price as unverifiable.*
+All four done — approver allowlist, price-drift guardrail, pending-approval
+expiry, and audit log are all live. Still worth revisiting
+`ALLOW_SELF_SECOND_APPROVAL` (FR-11) once the team is bigger than 3 people,
+and filling in `unit_price` on the Lists so the drift check has real data
+instead of always treating price as unverifiable.*
 
 ### FR-10 — Approver authorization allowlist · P0
 `[x]`
@@ -351,10 +352,44 @@ flagged it cannot also confirm it, unless `ALLOW_SELF_SECOND_APPROVAL` is set
 (both paths verified live).
 
 ### FR-12 — Pending-approval expiry · P1
-`[ ]`
-Auto-expire prompts after a configurable window (e.g. 24h) so stale drafts can't be
-approved days later at a drifted price. Update the message to "expired."
-**Accept:** approving after the window is refused; the message shows expired state.
+`[x]`
+`expiry.js`: `pendingApprovalExpiryHours()` (env `PENDING_APPROVAL_EXPIRY_HOURS`,
+default 24, same pattern as `scheduler.js`'s `leadTimeHours()`) and a pure
+`isExpired({ postedAt, now, expiryHours })`. `reorderCycle.js` now stamps
+every posted draft with `postedAt: Date.now()`. `pollExpiry({ client, logger })`
+runs on the same poll cadence as `pollDueLocations`/`pollCheckins` (added to
+`app.js`'s existing `Promise.all` tick) but isn't calendar-gated itself — it
+checks every location's open draft regardless of whether that location has a
+`calendarId`. `pendingStore.list()` now also returns each draft's `status`
+(previously data-only) so `pollExpiry` can find `'pending'`/
+`'awaiting_second_approval'` drafts old enough to expire, without a dedicated
+query method. Expiring a draft reuses `claimForResolution` — the exact same
+atomic claim Deny already uses — so a real approve/deny click landing at the
+same instant always wins the race; the poll only ever expires a draft nobody
+was actually resolving. `buildResolvedBlocks` (`blockKit.js`) gained an
+`'expired'` decision alongside `'approved'`/`'denied'`, and `auditLog.js`
+gained a matching `'expired'` event type (`scripts/audit-log.js` formats it
+too). A draft with no `postedAt` (posted before this feature existed) is
+deliberately never treated as expired — `isExpired` returns `false` rather
+than guessing, so upgrading doesn't retroactively expire in-flight drafts
+from before the deploy. `npm run run-expiry-poll` manually triggers a poll
+for testing, mirroring `run-checkin-poll`/`run-reorder-cycle`.
+Unit-tested (`test/expiry.test.js`): the expiry boundary, the no-`postedAt`
+safety case, and the env-var override/defaults; `test/pendingStore.test.js`
+covers `list()` now surfacing `status`.
+Live-verified against the real workspace: posted two real batches (WeHo,
+Rock Lititz) via `npm run run-reorder-cycle`, then ran `npm run
+run-expiry-poll` with `PENDING_APPROVAL_EXPIRY_HOURS` overridden to a
+fraction of a second — both correctly expired (`chat.update` succeeded, audit
+log shows `posted` → `expired` for both draftIds, `pendingStore.list()` no
+longer contains either). A third, pre-existing Rock Nashville draft from
+before this feature (no `postedAt`) was correctly left alone in the same
+poll — proving the no-`postedAt` safety case live, not just in a unit test.
+**Accept:** a draft older than the configured window is auto-expired and its
+message updates to show expired state (verified live, above); approving is a
+structural non-issue rather than something separately "refused" — the draft
+is already claimed and removed by the time anyone could click Approve, so
+the buttons just silently no-op like any other already-resolved draft.
 
 ### FR-13 — Audit log of decisions & orders · P1
 `[x]`
@@ -669,7 +704,7 @@ Expand from the single-user test group to real approvers/buyers once the above h
 2. ~~FR-27~~ ~~FR-28~~ ~~FR-29~~ done — multi-location, calendar-driven reorder trigger, and
    pre-booking check-in notification all live.
 3. ~~FR-06~~ ~~FR-07~~ done — Phase 2's reliability floor (state + idempotency) is complete.
-4. ~~FR-10~~ ~~FR-11~~ ~~FR-13~~ done — Phase 3 (spend safety & governance) is complete.
+4. ~~FR-10~~ ~~FR-11~~ ~~FR-12~~ ~~FR-13~~ done — Phase 3 (spend safety & governance) is complete.
 5. FR-14 (+ FR-15) — sketched against public docs, `[~]` not `[x]`; verify against a
    real order once the Amazon Business Order Placement role clears, then go live on
    one item.

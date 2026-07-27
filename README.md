@@ -41,9 +41,13 @@ can't be verified at all, which is the current reality since no List has
 `unit_price` filled in yet — blocks placing and requires a second, distinct
 approver via a "Confirm at new price" button (or the same approver, with
 `ALLOW_SELF_SECOND_APPROVAL=true`, a small-team override — see FR-11 below);
-Deny still works without one. Every prompt, decision, and order result is
-durably logged (FR-13) — `npm run audit-log [draftId]` retrieves who decided,
-when, the items, expected vs. actual charge, and the resulting order id.
+Deny still works without one. A draft left unresolved for too long
+auto-expires (FR-12, default 24h, `PENDING_APPROVAL_EXPIRY_HOURS` to
+override) — the message updates to show it expired and the buttons stop
+doing anything, so nobody can approve days later at a since-drifted price.
+Every prompt, decision, and order result is durably logged (FR-13) — `npm run
+audit-log [draftId]` retrieves who decided, when, the items, expected vs.
+actual charge, and the resulting order id.
 
 Phase 3 (spend safety & governance) is fully done. Live Amazon ordering
 (FR-14/FR-15) is *coded* — the Ordering API request, LWA auth, and token
@@ -243,6 +247,24 @@ approvers to go back to requiring a different person.
 There's no live Amazon price feed yet (see FR-14), so mock mode can't
 naturally produce drift — set `MOCK_PRICE_DRIFT_PER_UNIT` (a flat $ amount
 added to every unit's price) to simulate it for testing.
+
+### Pending-approval expiry (FR-12)
+
+A draft (including one already flagged for second approval) that sits
+unresolved for too long auto-expires on `npm start`'s regular poll tick —
+its message updates to show it expired and neither button does anything
+after that, forcing a fresh cycle (and a fresh price check) instead of
+letting someone approve days later at a stale price.
+
+Tune `PENDING_APPROVAL_EXPIRY_HOURS` (default 24) in `.env` if the default
+doesn't fit.
+
+```sh
+npm run run-expiry-poll
+```
+
+Manually triggers an expiry poll against a running `npm start` process, for
+testing without waiting on the real cadence.
 
 ### Audit log (FR-13)
 

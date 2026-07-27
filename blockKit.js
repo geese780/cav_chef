@@ -72,7 +72,12 @@ function buildResolvedBlocks({ draftItems, decision, byUserId, orderResults, loc
       ? `Flagged by <@${firstApproverId}>, confirmed by <@${byUserId}>`
       : `Approved by <@${byUserId}>`;
 
-  const header = decision === 'approved' ? `✅ ${approvalNote} — mock orders placed` : `🚫 Denied by <@${byUserId}>`;
+  const header =
+    decision === 'approved'
+      ? `✅ ${approvalNote} — mock orders placed`
+      : decision === 'expired'
+        ? `⏰ Expired — approval window passed, no order placed`
+        : `🚫 Denied by <@${byUserId}>`;
 
   const lines = draftItems.map(({ item, qty }, i) => {
     const orderId = orderResults && orderResults[i] && orderResults[i].orderId;

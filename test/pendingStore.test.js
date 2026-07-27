@@ -26,6 +26,11 @@ test('pendingStore CRUD (in-memory)', async t => {
     assert.ok(all.some(d => d.draftId === 'd2'));
   });
 
+  await t.test('list includes each draft\'s status (FR-12 needs it to find expirable drafts)', () => {
+    const all = store.list();
+    assert.ok(all.every(d => d.status === 'pending'));
+  });
+
   await t.test('remove deletes the draft', () => {
     store.remove('d1');
     assert.equal(store.get('d1'), undefined);

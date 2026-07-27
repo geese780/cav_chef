@@ -69,7 +69,11 @@ function createPendingStore(filePath) {
     },
     /** Deny can resolve a draft from either 'pending' or
      * 'awaiting_second_approval' — canceling a high-drift order shouldn't
-     * require the second approver to show up first. */
+     * require the second approver to show up first. Also reused by expiry.js
+     * (FR-12): expiring a stale draft is the same "cancel it" shape as a
+     * Deny, just triggered by a poll tick instead of a click, and the same
+     * atomic status guard prevents a race against a real approve/deny click
+     * landing at the same moment. */
     claimForResolution(draftId) {
       const result = db
         .prepare(
@@ -121,8 +125,14 @@ function createPendingStore(filePath) {
     remove(draftId) {
       db.prepare('DELETE FROM drafts WHERE draft_id = ?').run(draftId);
     },
+    /** Includes `status` (FR-12 needs it to find drafts eligible for expiry
+     * without adding a dedicated query method) alongside every field already
+     * in the draft's own data blob. */
     list() {
-      return db.prepare('SELECT data FROM drafts').all().map(row => JSON.parse(row.data));
+      return db
+        .prepare('SELECT status, data FROM drafts')
+        .all()
+        .map(row => ({ ...JSON.parse(row.data), status: row.status }));
     },
     close() {
       db.close();

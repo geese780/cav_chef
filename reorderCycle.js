@@ -48,7 +48,14 @@ async function runReorderCycle({ client, logger, location }) {
     blocks: buildReorderBlocks({ draftId, draftItems, locationName: location.name })
   });
 
-  pendingStore.put(draftId, { draftId, locationName: location.name, items: draftItems, channel, ts: result.ts });
+  pendingStore.put(draftId, {
+    draftId,
+    locationName: location.name,
+    items: draftItems,
+    channel,
+    ts: result.ts,
+    postedAt: Date.now() // FR-12: when the auto-expiry window starts counting from
+  });
 
   auditLog.log('posted', {
     draftId,
