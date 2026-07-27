@@ -247,10 +247,69 @@ exponential backoff; respect `Retry-After`.
 **Accept:** a simulated 429 is retried and the cycle completes; permanent errors fail loudly.
 
 ### FR-09 — Graceful shutdown & recovery · P2
-`[ ]`
-On SIGTERM, finish in-flight work and stop the scheduler cleanly. On boot, reconcile
-any drafts left in a "placing" state.
-**Accept:** restart during a cycle leaves no duplicate prompts and no half-placed orders.
+`[~]`
+Two independent halves:
+**Graceful shutdown:** `app.js` now tracks its poll `setInterval` handle
+(`pollTimer`, module-scope) and listens for `SIGTERM`/`SIGINT`. On either, it
+clears `pollTimer` (no new poll/expiry/check-in tick starts) and calls
+`app.stop()` (closes the Socket Mode connection, so no new Slack action gets
+dispatched either) before logging and exiting. Anything already in flight —
+a poll tick or an action handler mid-`await` — isn't forcibly aborted; Node's
+event loop keeps it running to completion since nothing here calls
+`process.exit()` until after `app.stop()` resolves. This is also what makes
+the Dockerfile's `CMD ["node", "app.js"]` comment ("so SIGTERM reaches the
+process directly for Cloud Run's graceful-shutdown request draining", FR-23)
+actually true — before this FR there was no listener at all, so a real
+SIGTERM would've just killed the process immediately with no chance to
+finish anything.
+**Boot-time reconciliation:** `reconcile.js`'s `reconcilePlacingDrafts`
+finds any draft still in `'placing'` (via `pendingStore.list()`'s `status`
+field, added for FR-12) the instant `app.start()` connects, before this
+process could possibly have claimed anything itself — so any such draft is
+unambiguously left over from a *previous* process crashing mid-approval
+(between claiming and finishing `placeOrder`/`chat.update`/`remove`).
+Deliberately **does not auto-resolve it**: reverting it to `'pending'` risks
+a duplicate order if a user re-approves one that already placed, and
+silently dropping it risks losing a real order that was never confirmed or
+logged — neither guess is safe with real money involved, so it's surfaced
+loudly instead (`appLogger.warn` + `alertOnFailure` to the approval channel,
+naming the draftId/locationName) for a human to check against Amazon
+Business/Slack history and resolve by hand.
+Unit-tested (`test/reconcile.test.js`): the pure `stuckDrafts` filter —
+empty input, only `'placing'` drafts selected, `'pending'`/
+`'awaiting_second_approval'` excluded.
+**Live-verified, boot-time reconciliation:** simulated a crash by calling
+`pendingStore.claim()` directly on a real still-open Rock Nashville draft
+(from earlier session testing) without following through — leaving it stuck
+in `'placing'` exactly like a real crash would. Started a real `npm start`:
+the very first log lines after "CAV_Chef is running" were the reconciliation
+warning naming that exact draftId, before any poll/calendar activity ran,
+and the alert posted successfully to the real `cav_labz` channel. The draft
+was left completely untouched (still `'placing'`, not removed or reverted) —
+confirming it doesn't guess. Manually restored it to `'pending'` afterward
+via a direct SQL update (outside the public store API, a one-off fix to
+undo this test's own perturbation of real data) so its original state is
+preserved for whenever a human actually does resolve it.
+**Not verifiable on this dev machine — graceful shutdown:** Windows doesn't
+deliver real POSIX signals, and this box makes that concrete rather than
+theoretical: `Stop-Process` unconditionally force-terminated the running
+`node app.js` with no shutdown log lines at all, and `taskkill` (without
+`/F`) against the same process was refused outright by Windows itself
+("This process can only be terminated forcefully"). Neither exercises the
+`SIGTERM`/`SIGINT` listener — this is a known Node-on-Windows limitation
+(Node's own docs note Windows signal delivery is emulated and limited), not
+a bug in this code. The listener is written to Node's documented POSIX
+signal semantics, which Cloud Run's actual deploy environment (Linux) uses
+for real — same gating as FR-23 (needs the real target environment, not
+this dev box) rather than something fixable here. Stays `[~]`, not `[x]`,
+until it's exercised on Linux/Cloud Run.
+**Accept:** boot-time reconciliation of a stuck `'placing'` draft is
+verified live, above (a human resolves it manually rather than the app
+guessing — the safer reading of "no half-placed orders" given no reliable
+way to know from here whether an order actually went through). Graceful
+`SIGTERM` handling is implemented and code-correct per Node's POSIX
+semantics but unverifiable on this Windows dev machine — needs a real
+Linux/Cloud Run restart to confirm the "finish in-flight work" half live.
 
 ---
 
@@ -704,6 +763,10 @@ Expand from the single-user test group to real approvers/buyers once the above h
 2. ~~FR-27~~ ~~FR-28~~ ~~FR-29~~ done — multi-location, calendar-driven reorder trigger, and
    pre-booking check-in notification all live.
 3. ~~FR-06~~ ~~FR-07~~ done — Phase 2's reliability floor (state + idempotency) is complete.
+   FR-09 is `[~]` — boot-time reconciliation is live-verified, graceful `SIGTERM`
+   handling is coded but needs a real Linux/Cloud Run restart to verify (this dev
+   machine is Windows, which doesn't deliver real POSIX signals). FR-08 (retry/backoff)
+   remains open.
 4. ~~FR-10~~ ~~FR-11~~ ~~FR-12~~ ~~FR-13~~ done — Phase 3 (spend safety & governance) is complete.
 5. FR-14 (+ FR-15) — sketched against public docs, `[~]` not `[x]`; verify against a
    real order once the Amazon Business Order Placement role clears, then go live on

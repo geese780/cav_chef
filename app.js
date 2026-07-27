@@ -12,6 +12,7 @@ const { buildCalendarClient } = require('./googleCalendar');
 const { pollDueLocations, leadTimeHours, pollIntervalMinutes } = require('./scheduler');
 const { pollCheckins, checkinLeadTimeHours, checkinRepingHours } = require('./checkin');
 const { pollExpiry, pendingApprovalExpiryHours } = require('./expiry');
+const { reconcilePlacingDrafts } = require('./reconcile');
 const { isApprover, allowSelfSecondApproval } = require('./approvers');
 const { priceDriftThreshold, evaluateDraftTotal } = require('./budget');
 const auditLog = require('./auditLog');
@@ -306,11 +307,21 @@ app.action('confirm_checkin', async ({ ack, action, body, client }) => {
   }
 });
 
+// FR-09: set by the startup IIFE below once the poll loop exists, so the
+// shutdown handler further down can stop it cleanly.
+let pollTimer;
+
 (async () => {
   try {
     await validateStartupConfig({ client: app.client, logger: appLogger });
     await app.start();
     appLogger.info('CAV_Chef is running');
+
+    // FR-09: boot-time reconciliation — must run right here, after
+    // app.start() connects but before this process could possibly have
+    // claimed anything itself, so any draft already sitting in 'placing' is
+    // unambiguously left over from a previous process's crash.
+    await reconcilePlacingDrafts({ client: app.client, logger: appLogger });
 
     // FR-20: health check HTTP server — required by Cloud Run (FR-23), which
     // needs the container to bind to $PORT and respond, or it's considered
@@ -343,7 +354,7 @@ app.action('confirm_checkin', async ({ ack, action, body, client }) => {
         });
 
     await poll();
-    setInterval(poll, intervalMinutes * 60 * 1000);
+    pollTimer = setInterval(poll, intervalMinutes * 60 * 1000);
     appLogger.info('Polling for due locations', {
       intervalMinutes,
       reorderLeadTimeHours: leadTimeHours(),
@@ -362,4 +373,37 @@ app.action('confirm_checkin', async ({ ack, action, body, client }) => {
 process.on('unhandledRejection', async err => {
   appLogger.error('Unhandled rejection', { error: err && err.message });
   await alertOnFailure(app.client, 'Unhandled rejection', { error: err && err.message }).catch(() => {});
+});
+
+// FR-09: graceful shutdown — stop the scheduler cleanly instead of leaving
+// a deploy/restart to kill the process mid-cycle. Stopping the poll timer
+// first means no *new* cycle/expiry/check-in tick starts once a shutdown is
+// underway; app.stop() then closes the Socket Mode connection so no new
+// Slack action gets dispatched either. Any single poll tick or action
+// handler already running when the signal arrives still gets to finish —
+// Node's event loop keeps running already-scheduled work until it's done;
+// nothing here forcibly aborts an in-flight await.
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  appLogger.info('Shutting down', { signal });
+  clearInterval(pollTimer);
+
+  try {
+    await app.stop();
+  } catch (error) {
+    appLogger.error('Error while stopping the app', { error: error.message });
+  }
+
+  appLogger.info('Shutdown complete');
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => {
+  shutdown('SIGTERM');
+});
+process.on('SIGINT', () => {
+  shutdown('SIGINT');
 });

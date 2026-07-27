@@ -16,8 +16,10 @@ than either of those bots. Own manifest, own tokens, own process.
 
 ## Status
 
-Phase 1 (correctness), Phase 1.5 (scheduling & multi-location), Phase 2
-(reliability), and Phase 3 (spend safety & governance) are all done.
+Phase 1 (correctness), Phase 1.5 (scheduling & multi-location), and Phase 3
+(spend safety & governance) are all done; Phase 2 (reliability)'s state and
+idempotency floor (FR-06/FR-07) is done, with graceful shutdown/recovery
+(FR-09) partially live (see below) and retry/backoff (FR-08) still open.
 Config/column validation on boot (FR-01), unit tests for the threshold logic
 (FR-03), and cross-cycle de-dup so a still-low item doesn't get re-prompted every
 cycle (FR-02). Multi-location support (FR-27): each location has its own
@@ -63,6 +65,22 @@ controls Bolt's internal verbosity separately from that; a `GET /health`
 endpoint (FR-20, default port 8080, `PORT` to override) reports the last
 successful poll time, and `placeOrder`/poll failures post an alert to
 `APPROVAL_CHANNEL_ID` (FR-19) instead of only going to stdout.
+
+### Shutdown & crash recovery (FR-09)
+
+`npm start` responds to `SIGTERM`/`SIGINT` by stopping the poll loop and the
+Socket Mode connection before exiting, instead of being killed mid-cycle —
+important on Cloud Run, which sends `SIGTERM` on every redeploy/scale event.
+Verified on this (Windows) dev machine that *forcing* the process closed
+(`Stop-Process`, `taskkill`) does **not** exercise this path — Windows
+doesn't deliver real `SIGTERM`; confirming the graceful path itself needs a
+real restart on Linux/Cloud Run.
+Separately, on every boot, any draft still sitting in `'placing'` — meaning
+a previous process crashed mid-approval — gets flagged with a log warning
+and a Slack alert to `APPROVAL_CHANNEL_ID` naming the draft. It's **not**
+auto-resolved: there's no safe way to guess from here whether the
+underlying order actually went through, so it's left exactly as found for a
+human to check against Amazon Business/Slack history and resolve by hand.
 
 ## Setup
 
