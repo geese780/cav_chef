@@ -22,7 +22,9 @@ idempotency, and retry/backoff floor (FR-06/FR-07/FR-08) is done, with
 graceful shutdown/recovery (FR-09) partially live (see below).
 Config/column validation on boot (FR-01), unit tests for the threshold logic
 (FR-03), and cross-cycle de-dup so a still-low item doesn't get re-prompted every
-cycle (FR-02). Multi-location support (FR-27): each location has its own
+cycle (FR-02). A List row too broken to act on (no ASIN, non-numeric on_hand/
+threshold) gets a low-noise Slack summary instead of silently never reordering
+forever (FR-04). Multi-location support (FR-27): each location has its own
 inventory List, all locations share one approval channel, and every prompt is
 tagged with its location name. Calendar-driven triggering (FR-28): each location
 with a `calendarId` configured auto-runs its cycle once its next booking is
@@ -65,6 +67,17 @@ controls Bolt's internal verbosity separately from that; a `GET /health`
 endpoint (FR-20, default port 8080, `PORT` to override) reports the last
 successful poll time, and `placeOrder`/poll failures post an alert to
 `APPROVAL_CHANNEL_ID` (FR-19) instead of only going to stdout.
+
+### Skipped-row reporting (FR-04)
+
+A row missing an ASIN (including a link that failed to resolve to one) or
+with a non-numeric `on_hand`/`threshold` is silently excluded from reorder
+consideration — it's not broken, just not actionable. Each reorder cycle now
+also posts a summary of any such row to `APPROVAL_CHANNEL_ID`, naming the
+row and why it's being skipped, so bad List data actually gets noticed and
+fixed. Low-noise: it only posts when the specific set of bad rows for a
+location changes, so a clean list posts nothing and a still-bad row doesn't
+re-ping on every cycle.
 
 ### Shutdown & crash recovery (FR-09)
 

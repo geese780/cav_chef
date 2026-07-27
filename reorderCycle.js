@@ -13,6 +13,7 @@ const { buildReorderBlocks } = require('./blockKit');
 const pendingStore = require('./pendingStore');
 const { parseLocations } = require('./locations');
 const auditLog = require('./auditLog');
+const { reportSkippedRows } = require('./skippedRowsReport');
 
 async function runReorderCycle({ client, logger, location }) {
   const log = logger || console;
@@ -27,6 +28,8 @@ async function runReorderCycle({ client, logger, location }) {
   }
 
   const items = await getInventoryItems({ client, logger: log, listId: location.listId });
+  await reportSkippedRows({ client, logger: log, locationName: location.name, items });
+
   const toReorder = itemsNeedingReorder(items);
 
   if (toReorder.length === 0) {

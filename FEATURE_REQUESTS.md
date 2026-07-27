@@ -56,10 +56,56 @@ duplicated as a separate case.
 **Accept:** test suite runs via `npm test` and passes; logic changes require test updates.
 
 ### FR-04 — Report skipped rows to Slack · P2
-`[ ]`
-Rows skipped for missing data are only logged. Post a low-noise summary (e.g. daily,
-or when count changes) to a maintenance channel so bad rows get fixed.
-**Accept:** a row missing an ASIN surfaces a message identifying it; clean lists post nothing.
+`[x]`
+Correction to this FR's own premise: skipped rows weren't "only logged"
+before this — `itemsNeedingReorder` silently filtered them out with zero
+visibility anywhere, not even a log line.
+`skippedRowsReport.js`'s pure `findSkippedRows(items)` flags any row missing
+an ASIN (including one that failed to resolve from a link) or with a
+missing/non-numeric `on_hand`/`threshold` — the same conditions
+`itemsNeedingReorder` already silently excludes on, each tagged with a
+human-readable reason. `reportSkippedRows({ client, logger, locationName,
+items })` posts a summary (`buildSkippedRowsBlocks`, `blockKit.js`) to
+`APPROVAL_CHANNEL_ID` — no separate maintenance channel, same reasoning as
+FR-19's alerting: a 3-person team doesn't benefit from watching two
+channels. Low-noise by design: it only posts when the *set* of skipped row
+ids for a location differs from the set it last actually posted (tracked
+in-memory per process, not persisted) — a clean list posts nothing, ever; a
+newly-bad row posts once, not on every poll tick. Wired into
+`reorderCycle.js`'s `runReorderCycle`, right after `getInventoryItems`, so
+it runs on the same cadence as the reorder cycle itself (including when
+`toReorder.length === 0` — a location with nothing to reorder still gets
+checked for bad rows).
+**Known, deliberate gap:** state is in-memory only, not persisted like
+`pendingStore`/`checkinStore`. A restart forgets what was last posted, so a
+still-bad row could repost once after a restart; and if a row's exact bad
+state recurs identically after being fixed and then breaking again the same
+way in between, it won't re-post (the last-posted set only updates on an
+actual post, so an intervening return-to-clean isn't distinguishable from
+"never changed"). Both are acceptable for a purely informational message —
+neither has the stakes of `pendingStore`'s crash-recovery requirements
+(FR-06), so persisting this felt like real over-engineering for what it
+buys.
+Unit-tested (`test/skippedRowsReport.test.js`): `findSkippedRows`'s exact
+conditions (missing asin, non-numeric on_hand/threshold, a row that's
+simply above threshold isn't flagged, mixed good/bad rows), and
+`reportSkippedRows` against a fake Slack client (posts once for a new bad
+set, doesn't re-post an unchanged set, re-posts when the set changes, stays
+silent for a clean list, no-ops without `APPROVAL_CHANNEL_ID`).
+Live-verified against the real workspace: all 3 real Lists are currently
+fully clean (confirmed via `npm run check-inventory-list` — no row to
+naturally trigger this), so verified the actual Slack-posting mechanics
+directly against the real client with a synthetic bad row (same approach as
+FR-19's `alertOnFailure` verification) — posted successfully to the real
+`cav_labz` channel; a second identical call in the same process correctly
+did not repost (confirmed via a wrapped `postMessage` call counter: 1 post
+across 2 identical calls). The full "a real List row is actually bad" path
+isn't independently reproducible without editing real production List
+data, which wasn't done — the pure decision logic and the live-posting
+mechanics are each verified on their own.
+**Accept:** a row missing an ASIN surfaces a message identifying it
+(unit-tested and live-verified via the real posting path, above); clean
+lists post nothing (unit-tested, and true today for all 3 real Lists).
 
 ### FR-05 — Write back on-hand quantity after a confirmed order · P2
 `[ ]`
@@ -808,7 +854,8 @@ Expand from the single-user test group to real approvers/buyers once the above h
 
 ## Suggested near-term order
 
-1. ~~FR-02~~ ~~FR-03~~ ~~FR-01~~ done — correctness locked in while still in mock mode.
+1. ~~FR-02~~ ~~FR-03~~ ~~FR-01~~ ~~FR-04~~ done — correctness locked in while still in mock
+   mode, plus visibility into any List row too broken to act on.
 2. ~~FR-27~~ ~~FR-28~~ ~~FR-29~~ done — multi-location, calendar-driven reorder trigger, and
    pre-booking check-in notification all live.
 3. ~~FR-06~~ ~~FR-07~~ ~~FR-08~~ done — Phase 2's reliability floor (state, idempotency,

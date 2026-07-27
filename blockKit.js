@@ -216,11 +216,28 @@ function buildCheckinResolvedBlocks({ locationName, bookingStart, byUserId }) {
   ];
 }
 
+/** FR-04: rows a location's inventory List can't act on — missing/unresolvable
+ * ASIN or a missing/non-numeric on_hand/threshold — so they get fixed instead
+ * of silently never reordering. */
+function buildSkippedRowsBlocks({ locationName, skipped }) {
+  const lines = skipped.map(row => `• *${row.name || '(unnamed row)'}* — ${row.reasons.join(', ')}`);
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*[${locationName}] ${skipped.length} inventory row(s) need attention*\n${lines.join('\n')}`
+      }
+    }
+  ];
+}
+
 module.exports = {
   buildReorderBlocks,
   buildResolvedBlocks,
   buildPriceDriftBlocks,
   buildCheckinBlocks,
   buildCheckinReminderBlocks,
-  buildCheckinResolvedBlocks
+  buildCheckinResolvedBlocks,
+  buildSkippedRowsBlocks
 };
