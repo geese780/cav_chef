@@ -6,9 +6,11 @@ config();
 const pendingStore = require('./pendingStore');
 const checkinStore = require('./checkinStore');
 const { placeOrder, buildIdempotencyKey, getCurrentPrice } = require('./orderingClient');
+const { incrementOnHand } = require('./inventoryList');
 const { buildResolvedBlocks, buildPriceDriftBlocks, buildCheckinResolvedBlocks } = require('./blockKit');
 const { validateStartupConfig, assertRequiredEnvVars } = require('./startupCheck');
 const { buildCalendarClient } = require('./googleCalendar');
+const { parseLocations } = require('./locations');
 const { pollDueLocations, leadTimeHours, pollIntervalMinutes } = require('./scheduler');
 const { pollCheckins, checkinLeadTimeHours, checkinRepingHours } = require('./checkin');
 const { pollExpiry, pendingApprovalExpiryHours } = require('./expiry');
@@ -128,6 +130,35 @@ async function placeAndResolve({ client, resolved, byUserId, firstApproverId, de
     byUserId,
     orderCount: orderResults.length
   });
+
+  // FR-05: bump on_hand by the ordered qty now that every item placed
+  // successfully — a stand-in for "this much is now in transit" so the next
+  // cycle doesn't immediately re-flag the same still-physically-low item.
+  // Best-effort and non-blocking: the orders themselves already succeeded
+  // by this point, so a Lists-write hiccup here shouldn't look like the
+  // approval itself failed — alert and move on rather than throw.
+  try {
+    const location = parseLocations().find(l => l.name === resolved.locationName);
+    if (location) {
+      await incrementOnHand({
+        client,
+        logger: appLogger,
+        listId: location.listId,
+        updates: resolved.items.map(({ rowId, qty }) => ({ rowId, qty }))
+      });
+    }
+  } catch (err) {
+    appLogger.error('Failed to update on_hand after a confirmed order', {
+      draftId: resolved.draftId,
+      locationName: resolved.locationName,
+      error: err.message
+    });
+    await alertOnFailure(client, 'Failed to update on_hand after a confirmed order', {
+      draftId: resolved.draftId,
+      locationName: resolved.locationName,
+      error: err.message
+    });
+  }
 }
 
 /** FR-11: price-drift guardrail — checks the current price against what was

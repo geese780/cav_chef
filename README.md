@@ -99,7 +99,11 @@ human to check against Amazon Business/Slack history and resolve by hand.
 
 1. Create a new Slack app at https://api.slack.com/apps/new → "From an app manifest"
    → paste in [manifest.json](./manifest.json).
-2. Install it to the CAV workspace.
+2. Install it to the CAV workspace. If the app was installed before `lists:write`
+   was added (FR-05 — writes back `on_hand` after a confirmed order), reinstall it
+   from the updated manifest so a workspace admin can approve the new scope;
+   without it, order confirmations still work, just with `missing_scope` logged
+   and alerted instead of the cell actually updating.
 3. Copy `.env` values:
    - **Bot User OAuth Token** (OAuth & Permissions) → `SLACK_BOT_TOKEN`
    - **App-Level Token** (Basic Information → App-Level Tokens, needs
@@ -250,6 +254,18 @@ message in place. Only users in `APPROVER_ALLOWLIST` can do this (FR-10); anyone
 else gets a private "not authorized" message and the prompt stays open. A
 location with a batch still pending skips its next cycle rather than posting a
 duplicate (FR-02).
+
+### On-hand write-back after a confirmed order (FR-05)
+
+Once every item in an approved batch places successfully, the List's
+`on_hand` cell for each item is incremented by its ordered qty — a
+stand-in for "this much is now in transit" so the very next cycle doesn't
+immediately re-flag the same still-physically-low item. This bot has no
+separate in-transit tracking, so `on_hand` only reflects true physical
+stock again once someone corrects it by hand once the order actually
+arrives. Needs the `lists:write` scope (see Setup above) — without it, this
+step alerts and logs `missing_scope` but doesn't block or undo the order
+itself, which has already placed by that point.
 
 ### Price-drift guardrail (FR-11)
 

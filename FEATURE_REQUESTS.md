@@ -108,11 +108,55 @@ mechanics are each verified on their own.
 lists post nothing (unit-tested, and true today for all 3 real Lists).
 
 ### FR-05 — Write back on-hand quantity after a confirmed order · P2
-`[ ]`
-After a successful order, optionally increment the List's on-hand cell by the ordered
-quantity via `slackLists.items.update` (needs `lists:write`).
-**Accept:** confirming an order of N updates the row's on-hand by N; failures don't
-corrupt the cell (update only after order success).
+`[~]`
+`incrementOnHand({ client, logger, listId, updates })` (`inventoryList.js`)
+increments each ordered row's `on_hand` cell by its ordered qty after every
+item in a batch places successfully — a lightweight stand-in for "this much
+is now in transit," so the very next cycle doesn't immediately re-flag the
+same still-physically-low item the moment the approved batch is removed
+from `pendingStore`. Deliberately approximate: this bot has no separate
+"in transit" concept, so `on_hand` only reflects true physical stock again
+once a human corrects it by hand once the shipment actually arrives — a
+documented simplification, not a full receiving workflow.
+Re-reads the List's *current* `on_hand` right before writing (a fresh
+`getInventoryItems` call), rather than trusting whatever value the draft
+cached when the cycle first posted it — that value can be stale by
+approval time (e.g. someone manually corrected a count in between), and
+writing stale math over a real cell is exactly the "corrupt the cell" risk
+this FR's own accept criteria calls out. A row that's disappeared from the
+List by the time of write-back is skipped rather than guessed at.
+The real Slack write payload shape (`{ list_id, cells: [{ row_id,
+column_id, number: [value] }] }` — number is an *array* on write, unlike
+the bare number Slack returns on read) was confirmed directly from
+`@slack/web-api`'s own installed TypeScript definitions
+(`SlackListsItemFieldNumber`, `SlackListsItemCellUpdate`) rather than
+guessed, since getting a live write endpoint's shape wrong risks silently
+corrupting real inventory data.
+Wired into `app.js`'s `placeAndResolve`, after every item in the batch
+places successfully and the core approval/audit-log/message-update steps
+are already done — wrapped in its own try/catch that alerts and logs but
+does **not** re-throw, since the orders themselves already succeeded by
+that point and a Lists-write hiccup afterward shouldn't make the approval
+itself look like it failed. Needs the `lists:write` scope, newly added to
+`manifest.json` — not required until this FR, so the Slack app needs to be
+reinstalled/re-approved before this can write anything for real.
+Unit-tested (`test/inventoryList.test.js`): no-ops with no updates, writes
+`fresh_on_hand + qty` for multiple rows in one batched `items.update` call,
+uses the fresh (not stale) `on_hand` when they differ, and skips a
+since-deleted row rather than guessing.
+**Live-verified, and it caught exactly the scope gap it was expected
+to:** ran `incrementOnHand` against the real WeHo List with a real row id.
+The request reached Slack correctly formed — not a malformed-payload error —
+and came back with a real `missing_scope` error naming exactly
+`needed: "lists:write"` (confirmed via `err.data`), proving the request
+shape is right and the only blocker is the not-yet-reinstalled scope.
+Re-read the same row afterward and confirmed `on_hand` was untouched (still
+its original value) — the failed write didn't partially corrupt anything.
+**Accept:** confirming an order of N updates the row's on-hand by N — coded
+and unit-tested (above); not yet live-confirmed end-to-end, since the
+`lists:write` scope needs a workspace admin to reinstall the app before a
+real write can succeed. Failures don't corrupt the cell — verified live,
+above (a real failed write left the real cell untouched).
 
 ---
 
@@ -855,7 +899,9 @@ Expand from the single-user test group to real approvers/buyers once the above h
 ## Suggested near-term order
 
 1. ~~FR-02~~ ~~FR-03~~ ~~FR-01~~ ~~FR-04~~ done — correctness locked in while still in mock
-   mode, plus visibility into any List row too broken to act on.
+   mode, plus visibility into any List row too broken to act on. FR-05 is `[~]` —
+   coded, unit-tested, and live-confirmed to reach Slack correctly formed, but blocked
+   on a workspace admin reinstalling the app to grant the new `lists:write` scope.
 2. ~~FR-27~~ ~~FR-28~~ ~~FR-29~~ done — multi-location, calendar-driven reorder trigger, and
    pre-booking check-in notification all live.
 3. ~~FR-06~~ ~~FR-07~~ ~~FR-08~~ done — Phase 2's reliability floor (state, idempotency,

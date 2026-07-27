@@ -16,6 +16,7 @@
         "groups:read",
         "users:read",
         "lists:read",
+        "lists:write",
         "files:read"
       ]
     }

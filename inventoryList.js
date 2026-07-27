@@ -189,4 +189,55 @@ function itemsNeedingReorder(items) {
     }));
 }
 
-module.exports = { getInventoryItems, itemsNeedingReorder, normalizeKey, extractAsin, validateInventoryListConfig };
+/**
+ * Increments a List row's on_hand cell by qty after a confirmed order
+ * (FR-05) — a lightweight stand-in for "this much is now in transit," so the
+ * very next cycle doesn't immediately re-flag the same still-physically-low
+ * item the moment the approved batch is removed from pendingStore. This bot
+ * has no separate "in transit" concept, so on_hand only reflects true
+ * physical stock again once someone corrects it by hand once the shipment
+ * actually arrives — a deliberate, documented approximation, not a full
+ * receiving workflow.
+ * Re-reads the List's *current* on_hand right before writing, rather than
+ * trusting the value captured whenever the reorder cycle first posted the
+ * draft — that value can be stale by the time of approval (e.g. someone
+ * manually corrected a count in between), and blindly overwriting a cell
+ * with stale math is exactly the "corrupt the cell" risk this FR's own
+ * accept criteria calls out.
+ * Needs the `lists:write` scope (see manifest.json) — not required until
+ * this FR, so a workspace admin needs to reinstall/approve the updated app
+ * permissions before this can write anything for real.
+ */
+async function incrementOnHand({ client, logger, listId, updates }) {
+  const log = logger || console;
+  if (!updates || updates.length === 0) return;
+
+  const schema = await fetchListSchema(client, listId);
+  const { columnIdFor } = mapSchemaColumns(schema);
+  if (!columnIdFor.on_hand) return; // shouldn't happen — getInventoryItems already requires this column
+
+  const freshItems = await getInventoryItems({ client, logger: log, listId });
+  const freshByRowId = new Map(freshItems.map(item => [item.rowId, item]));
+
+  const cells = [];
+  for (const { rowId, qty } of updates) {
+    const fresh = freshByRowId.get(rowId);
+    if (!fresh || fresh.onHand === undefined) continue; // row gone or on_hand unreadable — skip rather than guess
+    cells.push({ row_id: rowId, column_id: columnIdFor.on_hand, number: [fresh.onHand + qty] });
+  }
+  if (cells.length === 0) return;
+
+  await client.slackLists.items.update({ list_id: listId, cells });
+  const msg = 'Incremented on_hand after confirmed order';
+  const context = { listId, rowCount: cells.length };
+  log.info ? log.info(msg, context) : log.log(msg, context);
+}
+
+module.exports = {
+  getInventoryItems,
+  itemsNeedingReorder,
+  normalizeKey,
+  extractAsin,
+  validateInventoryListConfig,
+  incrementOnHand
+};
